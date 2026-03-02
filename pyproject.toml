@@ -1,0 +1,15 @@
+[project]
+name = "runs-in-behind"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "floodlight>=1.1.0",
+    "ipython>=9.10.0",
+    "matplotlib>=3.10.8",
+    "matplotlib-inline>=0.2.1",
+    "numpy>=2.4.2",
+    "pandas>=2.3.3",
+    "scipy>=1.17.1",
+]

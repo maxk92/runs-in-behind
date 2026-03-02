@@ -1,0 +1,17 @@
+# venv
+.venv/
+
+# Claude
+.claude/
+CLAUDE.md
+
+# Papers and instructions
+Definition_Tiefenlauf.pdf
+llana2022.pdf
+llana2022_movement_segmentation.md
+
+# other
+old_code/
+
+# data
+data/
