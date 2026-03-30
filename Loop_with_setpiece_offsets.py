@@ -1,7 +1,7 @@
 import json
 import os
 import pandas as pd
-from Discretisation_with_setpiece_offsets import process_match
+from Discretisation_with_setpiece_offsets3 import process_match
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -60,9 +60,10 @@ for match_id in ls_match_ids:
         # ── Per-match filter and save ─────────────────────────────────────────
         df_runs = df_mov[
             (df_mov['possession'] == df_mov['location']) &
-            (df_mov['speed_category'].isin(['jogging', 'running', 'sprinting'])) &
+            (df_mov['speed_category'].isin([ 'running', 'sprinting'])) &   #'jogging',
             (df_mov['duration_s'] > 2) &
             ((df_mov['x_end'] - df_mov['x_start']) * df_mov['attack_sign'] > 3) &
+            (df_mov['x_start']*df_mov['attack_sign'] > -30) &
             (df_mov['direction'] > 0.5) &
             (~df_mov['has_ball_touch'])
         ]
