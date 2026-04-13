@@ -1,47 +1,3 @@
-"""
-Discretisation_floodlight.py — VERSION OPTIMISÉE AVEC FLOODLIGHT
------------------------------------------------------------------
-Refactorisation du pipeline de discrétisation des efforts.
-
-L'API floodlight n'expose PAS de classes DFLMatchinformationParser /
-DFLEventDataParser — elle expose des fonctions directes :
-  - dfl.read_position_data_xml()   → tracking XY + possession + teamsheets
-  - dfl.read_event_data_xml()      → events (EventData floodlight)
-
-CE QUI A CHANGÉ vs. la version originale
------------------------------------------
-1. get_second_half_start_utc() + get_kickoff_frames()
-     → fusionnés en _build_time_anchors() : parse le XML events UNE SEULE FOIS
-       et passe les ancres en paramètre à toutes les fonctions qui en ont besoin.
-       L'original parsait les mêmes XMLs 3–4 fois séparément.
-
-2. build_shortname_to_person_id()
-     → _build_shortname_map_from_teamsheets() : construit le mapping depuis
-       les teamsheets déjà retournés par dfl.read_position_data_xml() —
-       zéro parse XML supplémentaire.
-
-3. parse_ball_contact_events()
-     → _parse_contacts_from_event_data() : utilise l'EventData floodlight
-       (déjà chargé par dfl.read_event_data_xml()) pour extraire les contacts
-       ballon, avec fallback XML minimal si les colonnes attendues sont absentes.
-
-4. process_match()
-     → charge tracking + events une seule fois, calcule les ancres une seule
-       fois, et passe tout en paramètre pour éviter tout re-parse en aval.
-
-CE QUI EST INCHANGÉ (logique métier trop fine pour floodlight)
---------------------------------------------------------------
-- build_possession_intervals()    : per-role delays (TOUCH_RECIPIENT_DELAY_S)
-- tag_ball_touches()              : TOUCH_BUFFER_FRAMES, active-touch logic
-- build_setpiece_blackout_frames(): offsets custom, extension frame-0 KickOff
-- smooth_possession() / rewrite_poss()
-- extract_movements_for_player()  : valley + metabolic power pipeline
-- summarize_movements_to_dataframe()
-
-Dépendances :
-  pip install floodlight numpy pandas scipy tqdm
-"""
-
 import os
 import xml.etree.ElementTree as ET
 
@@ -72,8 +28,8 @@ SETPIECE_OFFSETS = {
     'CornerKick': 4.0,
 }
 
-RECIPIENT_DELAY_S       = 3.0
-TOUCH_RECIPIENT_DELAY_S = 6.0
+RECIPIENT_DELAY_S       = 4.0
+
 
 
 # ============================================================================
@@ -1004,7 +960,7 @@ def process_match(
         print("  [contacts] EventData vide — fallback XML.")
         contacts = _parse_contacts_xml_fallback(anchors, framerate, path_events=path_events)
 
-    possession_intervals = build_possession_intervals(contacts, framerate=framerate, recipient_delay_s=6.0)
+    possession_intervals = build_possession_intervals(contacts, framerate=framerate, recipient_delay_s=RECIPIENT_DELAY_S)
 
     # Modifier possession avec les intervalles
     for half_name in ['firstHalf', 'secondHalf']:
