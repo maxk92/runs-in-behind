@@ -1,16 +1,14 @@
 import json
 import os
 import pandas as pd
-from Discretisation_with_setpiece_offsets3 import process_match
+import numpy as np
+from Discretisation_optimised2_1 import process_match
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 DATA_DIR  = r'C:\Users\arnau\Sciebo\SharedDrive_Arnaud_Franziska\data\open_data2223'
 JSON_PATH = r'C:\Users\arnau\Sciebo\SharedDrive_Arnaud_Franziska\data\direction_idsse_video.json'
 
-# Timezones handled automatically: matchinformation is always UTC (+00:00),
-# events are always local German time (CEST +02:00 in summer, CET +01:00 in winter).
-# pd.Timestamp.tz_convert('UTC') normalises both sides before any arithmetic.
 ls_match_ids = ['J03WMX', 'J03WN1', 'J03WPY', 'J03WOH', 'J03WQQ', 'J03WOY', 'J03WR9']
 
 # ── Load direction JSON once (shared across all matches) ──────────────────────
@@ -59,14 +57,13 @@ for match_id in ls_match_ids:
 
         # ── Per-match filter and save ─────────────────────────────────────────
         df_runs = df_mov[
-            (df_mov['possession'] == df_mov['location']) &
-            (df_mov['speed_category'].isin([ 'running', 'sprinting'])) &   #'jogging',
-            (df_mov['duration_s'] > 2) &
-            ((df_mov['x_end'] - df_mov['x_start']) * df_mov['attack_sign'] > 3) &
-            (df_mov['x_start']*df_mov['attack_sign'] > -30) &
-            (df_mov['direction'] > 0.5) &
-            (~df_mov['has_ball_touch'])
-        ]
+        (
+            (df_mov['possession'] == df_mov['location']) |
+            df_mov['possession_contested']) &
+            (df_mov['speed_category'].isin(['running', 'sprinting'])) &
+            (df_mov['distance_m'] > 3) &
+            (df_mov['direction'] > 0.3) 
+]
         df_runs.to_csv(
             os.path.join(output_dir, f'runs_behind_{match_id}.csv'), index=False
         )
