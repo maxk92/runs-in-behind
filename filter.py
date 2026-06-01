@@ -16,7 +16,7 @@ OUTPUT_DIR = os.path.dirname(CSV_PATH)
 # ── Utilities ─────────────────────────────────────────────────────────────────
 
 def load_data(path: str) -> pd.DataFrame:
-    print(f"\n📂 Loading: {path}")
+    print(f"\ns Loading: {path}")
     df = pd.read_csv(path)
     print(f"   → {len(df)} rows  |  {len(df.columns)} columns\n")
     return df
@@ -116,7 +116,7 @@ def apply_numeric_filter(df: pd.DataFrame, col: str) -> pd.DataFrame:
     for part in parts:
         op, val = parse_numeric_condition(part)
         if op is None:
-            print(f"  ⚠️  Unrecognised condition: «{part}», filter ignored.")
+            print(f"    Unrecognised condition: «{part}», filter ignored.")
             return df
         masks.append(build_numeric_mask(df[col], op, val))
 
@@ -132,7 +132,7 @@ def apply_numeric_filter(df: pd.DataFrame, col: str) -> pd.DataFrame:
 
     before = len(df)
     df = df[mask]
-    print(f"  ✅ Filter «{desc}» → {before - len(df)} rows removed, {len(df)} remaining")
+    print(f"   Filter «{desc}» → {before - len(df)} rows removed, {len(df)} remaining")
     return df
 
 
@@ -165,7 +165,7 @@ def apply_text_filter(df: pd.DataFrame, col: str) -> pd.DataFrame:
 
     before = len(df)
     df = df[df[col].astype(str).isin(values)]
-    print(f"  ✅ OR filter ({values}) → {before - len(df)} rows removed, {len(df)} remaining")
+    print(f"   OR filter ({values}) → {before - len(df)} rows removed, {len(df)} remaining")
     return df
 
 
@@ -175,12 +175,12 @@ def apply_bool_filter(df: pd.DataFrame, col: str) -> pd.DataFrame:
     print(f"\n  Available values: True / False")
     raw = input("  Keep [True/False]: ").strip().lower()
     if raw not in ("true", "false"):
-        print("  ⚠️  Invalid value, filter ignored.")
+        print("    Invalid value, filter ignored.")
         return df
     keep = raw == "true"
     before = len(df)
     df = df[df[col] == keep]
-    print(f"  ✅ {before - len(df)} rows removed → {len(df)} remaining")
+    print(f"   {before - len(df)} rows removed → {len(df)} remaining")
     return df
 
 
@@ -212,7 +212,7 @@ def filter_loop(df: pd.DataFrame) -> pd.DataFrame:
             raw_col = input("\n  Column number or name: ").strip()
             col = resolve_column(df, raw_col)
             if col is None:
-                print("  ⚠️  Column not found.")
+                print("    Column not found.")
                 continue
 
             dtype = df[col].dtype
@@ -229,7 +229,7 @@ def filter_loop(df: pd.DataFrame) -> pd.DataFrame:
                 applied.append(f"{col}(txt)")
 
         elif choice == "r":
-            confirm = input("  ⚠️  Reset? All filters will be lost. [y/n]: ").strip().lower()
+            confirm = input("    Reset? All filters will be lost. [y/n]: ").strip().lower()
             if confirm == "y":
                 df = load_data(CSV_PATH)
                 applied = []
@@ -243,7 +243,7 @@ def filter_loop(df: pd.DataFrame) -> pd.DataFrame:
                 name += ".csv"
             out_path = os.path.join(OUTPUT_DIR, name)
             df.to_csv(out_path, index=False)
-            print(f"\n  ✅ Filtered CSV saved: {out_path}")
+            print(f"\n   Filtered CSV saved: {out_path}")
             print(f"     {len(df)} rows  |  {len(df.columns)} columns")
             break
 
@@ -252,7 +252,7 @@ def filter_loop(df: pd.DataFrame) -> pd.DataFrame:
             break
 
         else:
-            print("  ⚠️  Unrecognised choice.")
+            print("    Unrecognised choice.")
 
     return df
 
@@ -265,7 +265,7 @@ def main():
     print("═" * 60)
 
     if not os.path.isfile(CSV_PATH):
-        print(f"\n❌ File not found: {CSV_PATH}")
+        print(f"\n File not found: {CSV_PATH}")
         print("   Check the path in the CSV_PATH variable at the top of the script.")
         sys.exit(1)
 
