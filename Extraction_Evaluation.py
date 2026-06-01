@@ -110,7 +110,7 @@ def print_report(results, annotators):
     print("=" * 72)
 
     for ann in annotators:
-        print(f"\n  ▶  Annotator: {ann.upper()}")
+        print(f"\n    Annotator: {ann.upper()}")
         print("  " + "-" * 68)
         print(f"  {'Match':<12} {'TP':>6} {'FP':>6} {'FN':>6} {'Precision':>12} {'Recall':>10}")
         print("  " + "-" * 68)
@@ -137,7 +137,7 @@ def export_false_negatives(results, output_path):
             all_fn.extend(fn_rows)
 
     if not all_fn:
-        print("\n  ✔  No false negatives detected.")
+        print("\n    No false negatives detected.")
         return
 
     df_fn = pd.DataFrame(all_fn)
@@ -153,7 +153,7 @@ def export_false_negatives(results, output_path):
     df_fn = df_fn[priority_cols + other_cols]
 
     df_fn.to_csv(output_path, index=False)
-    print(f"\n  ✔  {len(df_fn)} false negative(s) exported → {output_path}")
+    print(f"\n    {len(df_fn)} false negative(s) exported → {output_path}")
 
 
 if __name__ == "__main__":

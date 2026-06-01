@@ -266,7 +266,7 @@ def consolidate_match(
             )
 
         if not dfs:
-            log.warning("  ⚠ No valid annotations for %s — %s", match_id, half)
+            log.warning("   No valid annotations for %s — %s", match_id, half)
             continue
 
         half_df      = pd.concat(dfs, ignore_index=True)
@@ -276,7 +276,7 @@ def consolidate_match(
             consolidated["half"] = half
             all_halves.append(consolidated)
             log.info(
-                "  ✓ Consolidated GT %-10s: %d runs  (from %d raw annotations)",
+                "   Consolidated GT %-10s: %d runs  (from %d raw annotations)",
                 half, len(consolidated), len(half_df),
             )
 
@@ -295,7 +295,7 @@ def consolidate_match(
 
     out_path = os.path.join(gt_out_dir, f"GT_consolidated_{match_id}.csv")
     gt.to_csv(out_path, index=False)
-    log.info("  💾 GT saved → %s  (%d runs)", out_path, len(gt))
+    log.info("   GT saved → %s  (%d runs)", out_path, len(gt))
     return gt
 
 
@@ -373,7 +373,7 @@ def label_predictions(
     preds["label"] = labels
     pos = sum(labels)
     log.info(
-        "  ✓ Predictions labelled: %d total | %d label=1 (%.1f%%) | %d label=0",
+        "   Predictions labelled: %d total | %d label=1 (%.1f%%) | %d label=0",
         len(labels), pos,
         100 * pos / len(labels) if labels else 0.0,
         len(labels) - pos,
@@ -381,7 +381,7 @@ def label_predictions(
 
     out_path = os.path.join(out_dir, f"labeled_runs_behind_{match_id}.csv")
     preds.to_csv(out_path, index=False)
-    log.info("  💾 Labelled predictions saved → %s", out_path)
+    log.info("   Labelled predictions saved → %s", out_path)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

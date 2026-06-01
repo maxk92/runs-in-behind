@@ -108,7 +108,7 @@ def load_annotations(data_dir: str, match_id: str) -> dict:
         basename = os.path.splitext(os.path.basename(path))[0]
         parts    = basename.split("_", 2)
         if len(parts) < 3:
-            print(f"⚠  Ignored (unexpected name): {basename}")
+            print(f"  Ignored (unexpected name): {basename}")
             continue
 
         key = f"{parts[1]}_{parts[2]}"
@@ -122,7 +122,7 @@ def load_annotations(data_dir: str, match_id: str) -> dict:
         if "player" not in df.columns:
             df["player"] = df["player_jid"].astype(str)
         dfs[key] = df
-        print(f"  ✓  {key:32s}  {len(df):3d} segments")
+        print(f"    {key:32s}  {len(df):3d} segments")
 
     print(f"\n  {len(dfs)} file(s) loaded.\n")
     return dfs
@@ -375,7 +375,7 @@ def plot_summary_dashboard(stats_df: pd.DataFrame, isolated_df: pd.DataFrame,
     mean_Δstart, mean_Δend — one color per pair, one group per half.
     """
     if stats_df.empty:
-        print("  ⚠  No data for the dashboard.")
+        print("    No data for the dashboard.")
         return
 
     halves = stats_df["half"].unique()
@@ -471,7 +471,7 @@ def plot_summary_dashboard(stats_df: pd.DataFrame, isolated_df: pd.DataFrame,
     out_path = os.path.join(output_dir, "dashboard_metrics.png")
     fig.savefig(out_path, dpi=160, bbox_inches="tight", facecolor=BG_DARK)
     plt.close(fig)
-    print(f"  📊 Dashboard saved       : {out_path}")
+    print(f"   Dashboard saved       : {out_path}")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -554,7 +554,7 @@ def plot_player_heatmap(dfs: dict, output_dir: str = "."):
     out_path = os.path.join(output_dir, "player_heatmap.png")
     fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor=BG_DARK)
     plt.close(fig)
-    print(f"  🟦 Heatmap saved         : {out_path}")
+    print(f"   Heatmap saved         : {out_path}")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -646,7 +646,7 @@ def plot_stats_table_figure(stats_df: pd.DataFrame, output_dir: str = "."):
     out_path = os.path.join(output_dir, "stats_table.png")
     fig.savefig(out_path, dpi=160, bbox_inches="tight", facecolor=BG_DARK)
     plt.close(fig)
-    print(f"  📋 Table saved           : {out_path}")
+    print(f"   Table saved           : {out_path}")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -658,7 +658,7 @@ def plot_iou_distribution(details_df: pd.DataFrame, output_dir: str = "."):
     Shows the spread of match quality.
     """
     if details_df.empty:
-        print("  ⚠  No match details for IoU distribution.")
+        print("    No match details for IoU distribution.")
         return
 
     pairs  = sorted(details_df["pair"].unique())
@@ -731,7 +731,7 @@ def plot_iou_distribution(details_df: pd.DataFrame, output_dir: str = "."):
     out_path = os.path.join(output_dir, "iou_distribution.png")
     fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor=BG_DARK)
     plt.close(fig)
-    print(f"  🎻 IoU distribution      : {out_path}")
+    print(f"   IoU distribution      : {out_path}")
 
 
 
@@ -970,7 +970,7 @@ def plot_ribbons(dfs: dict, tolerance: int = 0, output_dir: str = "."):
 
         # "compressed scale" annotation
         ax.text(0.99, -0.08,
-                "⚡ Non-linear axis — empty zones compressed",
+                " Non-linear axis — empty zones compressed",
                 transform=ax.transAxes, ha="right", va="top",
                 fontsize=7.5, color=TEXT_DIM, style="italic")
 
@@ -999,7 +999,7 @@ def plot_ribbons(dfs: dict, tolerance: int = 0, output_dir: str = "."):
         out_path = os.path.join(output_dir, f"ribbon_{half}.png")
         fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor=BG_DARK)
         plt.close(fig)
-        print(f"  🎀 Ribbon saved         : {out_path}")
+        print(f"   Ribbon saved         : {out_path}")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1136,7 +1136,7 @@ def plot_arcs(dfs: dict, tolerance: int = 0, output_dir: str = "."):
 
         # "compressed scale" annotation
         ax.text(0.99, -0.06,
-                "⚡ Non-linear axis — empty zones compressed",
+                " Non-linear axis — empty zones compressed",
                 transform=ax.transAxes, ha="right", va="top",
                 fontsize=7.5, color=TEXT_DIM, style="italic")
 
@@ -1165,7 +1165,7 @@ def plot_arcs(dfs: dict, tolerance: int = 0, output_dir: str = "."):
         out_path = os.path.join(output_dir, f"arcs_{half}.png")
         fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor=BG_DARK)
         plt.close(fig)
-        print(f"  🌀 Arcs saved           : {out_path}")
+        print(f"   Arcs saved           : {out_path}")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1179,7 +1179,7 @@ def plot_confusion_matrices(stats_df: pd.DataFrame, output_dir: str = "."):
     Cell [A, B] = direction A -> B.
     """
     if stats_df.empty:
-        print("  ⚠  No data for confusion matrices.")
+        print("    No data for confusion matrices.")
         return
 
     annotators = sorted(
@@ -1303,7 +1303,7 @@ def plot_confusion_matrices(stats_df: pd.DataFrame, output_dir: str = "."):
     out_path = os.path.join(output_dir, "confusion_matrices.png")
     fig.savefig(out_path, dpi=160, bbox_inches="tight", facecolor=BG_DARK)
     plt.close(fig)
-    print(f"  🟩 Confusion matrices    : {out_path}")
+    print(f"   Confusion matrices    : {out_path}")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1312,7 +1312,7 @@ def plot_confusion_matrices(stats_df: pd.DataFrame, output_dir: str = "."):
 def print_banner():
     print()
     print("╔" + "═" * 63 + "╗")
-    print("║  🎬  Inter-Annotator Analysis · Runs-in-Behind" + " " * 14 + "║")
+    print("║     Inter-Annotator Analysis · Runs-in-Behind" + " " * 14 + "║")
     print(f"║  Match     : {MATCH_ID}" + " " * (63 - 13 - len(MATCH_ID) - 1) + "║")
     print(f"║  Tolerance : {TOLERANCE} frames" + " " * (63 - 14 - len(str(TOLERANCE)) - 8) + "║")
     print("╚" + "═" * 63 + "╝")
@@ -1331,7 +1331,7 @@ def print_stats_rich(stats_df: pd.DataFrame, isolated_df: pd.DataFrame):
     n_iso = len(isolated_df)
     print(f"┌─ Isolated segments: {n_iso} total " + "─" * max(0, 43 - len(str(n_iso))) + "┐")
     if isolated_df.empty:
-        print("│  No isolated segment. ✅" + " " * 38 + "│")
+        print("│  No isolated segment. " + " " * 38 + "│")
     else:
         iso_by_ann = isolated_df.groupby(["half", "annotator"]).size().reset_index(name="count")
         for _, row in iso_by_ann.iterrows():
@@ -1377,9 +1377,9 @@ def main():
     stats_df.to_csv(stats_path,    index=False)
     isolated_df.to_csv(isolated_path, index=False)
     details_df.to_csv(details_path,   index=False)
-    print(f"  📄 Stats CSV        → {stats_path}")
-    print(f"  📄 Isolated CSV     → {isolated_path}")
-    print(f"  📄 Match details    → {details_path}")
+    print(f"   Stats CSV        → {stats_path}")
+    print(f"   Isolated CSV     → {isolated_path}")
+    print(f"   Match details    → {details_path}")
     print()
 
     # Visualisations
@@ -1409,7 +1409,7 @@ def main():
 
     print()
     print("╔" + "═" * 63 + "╗")
-    print("║  ✅  Analysis complete!  All outputs are in:" + " " * 18 + "║")
+    print("║     Analysis complete!  All outputs are in:" + " " * 18 + "║")
     print(f"║  {OUTPUT_DIR[:60]}" + " " * max(0, 61 - len(OUTPUT_DIR[:60])) + "║")
     print("╚" + "═" * 63 + "╝")
     print()
