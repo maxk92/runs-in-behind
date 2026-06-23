@@ -30,9 +30,9 @@ SPEED_THRESHOLDS = {
 SETPIECE_OFFSETS = {
     'ThrowIn':    2.0,
     'FreeKick':   3.0,
-    'GoalKick':   3.0,
+    'GoalKick':   4.0,
     'KickOff':    6.0,
-    'CornerKick': 4.0,
+    'CornerKick': 3.0,
 }
 
 RECIPIENT_DELAY_S = 4.0
@@ -156,23 +156,71 @@ def compute_metabolic_power(velocity_ms, framerate=25):
     return power, accel, ec
 
 
+def _first_inflection_after(extremum_idx, dp, search_limit):
+    """
+    Return the index of the first local extremum of `power` strictly after
+    `extremum_idx` and before `search_limit`.
+
+    power = v * v'  (velocity times acceleration)
+    dp    = d(power)/dt = (v')^2 + v * v''
+
+    A sign change of dp  (dp[k-1] * dp[k] < 0)  marks a local extremum of
+    power — i.e. a point where power switches from increasing to decreasing
+    or vice versa.  This is NOT an inflection point of power (which would
+    require d²p = 0) and NOT an inflection point of velocity (which would
+    require v'' = 0).
+
+    Heuristic rationale: cutting at a power extremum lands on a natural
+    "shoulder" of the effort curve, avoiding cuts right in the middle of an
+    acceleration or deceleration phase.
+
+    If no such extremum is found before `search_limit`, the original
+    `extremum_idx` is returned as fallback.
+    """
+    for k in range(extremum_idx + 1, search_limit):
+        if dp[k - 1] * dp[k] < 0:
+            return k
+    return extremum_idx   # fallback: no inflection found → keep original cut
+
+
 def split_segment_by_power(segment_df, framerate=25,
                             power_threshold=6.0, min_segment_frames=10):
     v             = segment_df['velocity'].values
     power, _, ec  = compute_metabolic_power(v, framerate=framerate)
     dp            = np.gradient(power)
+   
+
+    n = len(power)
 
     # Pre-filter candidate split positions vectorially.
-    # The stateless conditions (brutal change / sign change) are computed in
-    # one vectorised pass; only `long_enough` (depends on previous split)
-    # needs the residual loop.
-    inner = np.arange(min_segment_frames, len(power) - min_segment_frames)
+    # `is_brutal`  : large instantaneous change in power (kept as-is).
+    # `sign_change`: local extremum of the power curve (zero-crossing of power).
+    #                These are now PROMOTED to the first inflection point of dp
+    #                that follows the extremum, so the cut lands on a natural
+    #                "shoulder" of the curve rather than right at the peak.
+    inner = np.arange(min_segment_frames, n - min_segment_frames)
     is_brutal   = np.abs(dp[inner]) > power_threshold
     sign_change = power[inner - 1] * power[inner] < 0
-    candidates  = inner[is_brutal | sign_change]
+
+    # For each extremum candidate, find the first inflection point of dp after it.
+    # Inflection of dp  ≡  sign change of d2p  ≡  dp[k-1]*dp[k] < 0
+    extremum_positions = inner[sign_change]
+    inflection_map = {}   # extremum_idx → inflection_idx
+    search_cap = n - min_segment_frames   # never cut too close to the end
+    for ext in extremum_positions:
+        inflection_map[int(ext)] = _first_inflection_after(int(ext), dp, search_cap)
+
+    # Build the final candidate list:
+    # - brutal-change positions are kept at their original index
+    # - extremum positions are replaced by their downstream inflection point
+    brutal_positions = set(inner[is_brutal].tolist())
+    raw_candidates   = sorted(
+        brutal_positions
+        | set(inflection_map.values())
+    )
 
     split_indices = [0]
-    for i in candidates:
+    for i in raw_candidates:
         if (i - split_indices[-1]) >= min_segment_frames:
             split_indices.append(int(i))
     split_indices.append(len(segment_df))
@@ -194,8 +242,8 @@ def split_segment_by_power(segment_df, framerate=25,
 def extract_movements_for_player(
         player_id, velocities, tracking_data, possession,
         min_valley_distance=15,
-        valley_depth_abs=0.3,
-        valley_depth_rel=0.10,
+        valley_depth_abs=0.15,
+        valley_depth_rel=0.05,
         power_threshold=6.0,
         min_segment_frames=10,
         framerate=25,
@@ -266,8 +314,8 @@ def extract_movements_for_player(
 def extract_discrete_movements_all_players(
         velocities, tracking_data, possession,
         min_valley_distance=15,
-        valley_depth_abs=0.3,
-        valley_depth_rel=0.10,
+        valley_depth_abs=0.15,
+        valley_depth_rel=0.05,
         power_threshold=6.0,
         min_segment_frames=10,
         framerate=25,
@@ -337,7 +385,7 @@ def summarize_movements_to_dataframe(movements_dict, teamsheet, framerate=25):
             poss_vals  = df['possession'].values
             home_ratio = float((poss_vals == 1).mean())
             possession_label     = "Home" if home_ratio >= 0.5 else "Away"
-            possession_contested = 0.35 < home_ratio < 0.65
+            possession_contested = 0.30 < home_ratio < 0.70
 
             rows.append({
                 'start_frame':            int(frames[0]),
@@ -973,8 +1021,8 @@ def process_match(
         butterworth_Wn      = 0.5,
         butterworth_order   = 1,
         min_valley_distance = 15,
-        valley_depth_abs    = 0.3,
-        valley_depth_rel    = 0.10,
+        valley_depth_abs    = 0.15,
+        valley_depth_rel    = 0.05,
         power_threshold     = 6.0,
         min_segment_frames  = 10,
         framerate           = 25,
