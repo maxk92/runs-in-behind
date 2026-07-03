@@ -699,11 +699,11 @@ def _render_frame(ax        : plt.Axes,
 
     for p in frame.players:
         if target_player is not None and p.name == target_player:
-            color = '#0000cd'
+            color = "#cd00007f"
         elif p.team == att_team:
-            color = "#99BAFC"
+            color = '#FF1A00'   
         else:
-            color = '#FF1A00'
+            color = "#99BAFC"
 
         ax.scatter(p.x, p.y, c=color, s=70, zorder=5,
                    edgecolors='black', linewidths=0.5)
