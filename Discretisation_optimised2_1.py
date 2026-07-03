@@ -30,12 +30,12 @@ SPEED_THRESHOLDS = {
 SETPIECE_OFFSETS = {
     'ThrowIn':    2.0,
     'FreeKick':   3.0,
-    'GoalKick':   4.0,
+    'GoalKick':   3.0,
     'KickOff':    6.0,
     'CornerKick': 3.0,
 }
 
-RECIPIENT_DELAY_S = 4.0
+RECIPIENT_DELAY_S = 0.0
 
 
 # ============================================================================

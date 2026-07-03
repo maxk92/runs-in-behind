@@ -61,7 +61,7 @@ for match_id in ls_match_ids:
             (df_mov['possession'] == df_mov['location']) |
             df_mov['possession_contested']) &
             (df_mov['speed_category'].isin(['running', 'sprinting'])) &
-            (df_mov['distance_m'] > 3) &
+            (df_mov['distance_m'] > 2.5) & # in the definition the thresold is 3 m, but we use 2.5 m to avoid computing error
             (df_mov['direction'] > 0.3) 
 ]
         df_runs.to_csv(
