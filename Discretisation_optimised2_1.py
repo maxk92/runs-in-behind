@@ -28,7 +28,7 @@ SPEED_THRESHOLDS = {
 }
 
 SETPIECE_OFFSETS = {
-    'ThrowIn':    1.0,
+    'ThrowIn':    2.0,
     'FreeKick':   2.0,
     'GoalKick':   2.0,
     'KickOff':    6.0,
@@ -36,6 +36,44 @@ SETPIECE_OFFSETS = {
 }
 
 RECIPIENT_DELAY_S = 0.0
+
+# --- Pre-run window -----------------------------------------------------
+# Length (seconds) of the window looked at BEFORE a movement's start frame
+# to compute "pre_run_mean_vel_kmh" / "pre_run_peak_vel_kmh".
+PRE_RUN_WINDOW_S = 2.0
+
+# --- Shot-follow-up flag -------------------------------------------------
+# A movement is flagged "shot_within_Ns" if the SAME team takes a shot within
+# this many seconds after the movement's end frame (same half).
+SHOT_WINDOW_S = 10.0
+
+# --- Pitch zones (D/M/A x 1-5) -------------------------------------------
+# Standard DFL coordinate system:
+#   x in [-52.5, 52.5]  (negative = left goal, positive = right goal)
+#   y in [-34,   34  ]  (negative = bottom touchline)
+#
+# Horizontal thirds (3 zones):
+#   Defensive third   x < -17.5
+#   Middle third     -17.5 <= x <= 17.5
+#   Attacking third   x >  17.5
+#
+# Vertical channels (5 zones) based on the penalty-box width (40.32 m -> +-20.16)
+# and the goal width (7.32 m -> +-3.66):
+#   corner -> box line -> near post -> far post -> box line -> corner
+#
+# Combined: 3 thirds x 5 channels = 15 zones, e.g. "D1", "M3", "A5"
+#   Third prefix: D = defensive, M = middle, A = attacking (from the
+#   perspective of the team performing the movement, once normalised for
+#   playing direction -- see assign_zone()).
+#   Channel suffix 1-5, from bottom (most negative y) to top (most positive y).
+THIRD_BOUNDARIES_X   = [-17.5, 17.5]                  # two cut-points -> three thirds
+CHANNEL_BOUNDARIES_Y = [-20.16, -3.66, 3.66, 20.16]   # four cut-points -> five channels
+
+# Canonical direction used ONLY for zone assignment (D/M/A x 1-5).
+# Every movement is mirrored on x/y so that, for zoning purposes, everyone
+# "plays" in this direction -- the raw x_start/x_mid/x_end/y_* columns are
+# NOT touched, only the zone label changes.
+ZONE_TARGET_DIRECTION = "right_to_left"
 
 
 # ============================================================================
@@ -63,6 +101,71 @@ def classify_speed_category(peak_speed_kmh, thresholds=None):
         return 'running'
     else:
         return 'sprinting'
+
+
+def get_play_direction(dict_direction, match_id, team, half):
+    """
+    Return 'left_to_right' or 'right_to_left' -- the direction `team`
+    ('Home' or 'Away') is attacking during `half`.
+
+    Only "Home" is stored in dict_direction; "Away" is derived as the
+    opposite direction in the same half. Returns None if unknown (missing
+    match_id, missing half, or unrecognised team) so callers can skip
+    zone-normalisation rather than guess.
+    """
+    opposite = {'left_to_right': 'right_to_left', 'right_to_left': 'left_to_right'}
+    home_dir = dict_direction.get(match_id, {}).get('Home', {}).get(half)
+    if home_dir is None:
+        return None
+    if team == 'Home':
+        return home_dir
+    if team == 'Away':
+        return opposite.get(home_dir)
+    return None
+
+
+def assign_zone(x, y, direction=None, target=ZONE_TARGET_DIRECTION,
+                third_boundaries_x=THIRD_BOUNDARIES_X,
+                channel_boundaries_y=CHANNEL_BOUNDARIES_Y):
+    """
+    Return a pitch-zone label such as 'D1', 'M3', 'A5' for a given (x, y)
+    position.
+
+    Methodology
+    -----------
+    1. Direction normalisation: if `direction` is given and differs from
+       `target`, x and y are mirrored (negated) first, so that every
+       movement is zoned as if the team were playing in `target` direction
+       (default: 'right_to_left', i.e. attacking towards negative x).
+       This only affects which zone label is returned -- it never mutates
+       the caller's raw x_start/x_mid/x_end/y_* coordinates.
+    2. Horizontal third: x is compared against `third_boundaries_x`
+       ([-17.5, 17.5] by default) to decide Defensive / Middle / Attacking.
+    3. Vertical channel: y is located among `channel_boundaries_y`
+       ([-20.16, -3.66, 3.66, 20.16] by default) via np.searchsorted,
+       giving a channel index from 1 (most negative y) to 5 (most positive y).
+    4. The label is the concatenation of the third letter and the channel
+       number, e.g. "A5" = attacking third, top channel.
+
+    If (x, y) is NaN, returns NaN (no zone can be assigned).
+    """
+    if x is None or y is None or (isinstance(x, float) and np.isnan(x)) \
+            or (isinstance(y, float) and np.isnan(y)):
+        return np.nan
+
+    if direction is not None and direction == target:
+        x = -x
+        y = -y
+
+    if x < third_boundaries_x[0]:
+        third = 'D'
+    elif x <= third_boundaries_x[1]:
+        third = 'M'
+    else:
+        third = 'A'
+
+    channel = int(np.searchsorted(channel_boundaries_y, y)) + 1  # 1-5
+    return f"{third}{channel}"
 
 
 # ============================================================================
@@ -239,6 +342,52 @@ def split_segment_by_power(segment_df, framerate=25,
 # Valley filtering is fully vectorised (batch operations, reduced Python overhead).
 # ============================================================================
 
+def _compute_pre_run_window(player_velocity, start_frame, pre_run_window_s, framerate):
+    """
+    Compute the "pre-run window" kinematic indicators: the mean and peak
+    speed of the player during the `pre_run_window_s` seconds immediately
+    BEFORE `start_frame` (i.e. before the movement begins).
+
+    Methodology
+    -----------
+    1. Convert `pre_run_window_s` to a number of frames
+       (pre_frames = round(pre_run_window_s * framerate)).
+    2. Take the window [start_frame - pre_frames, start_frame) on the
+       player's FULL velocity time series for the half (clipped to 0 so it
+       never looks before the start of the half's tracking data).
+    3. Drop NaN samples (gaps in tracking).
+    4. pre_run_mean_vel_kmh / pre_run_peak_vel_kmh = mean / max of the
+       remaining valid samples, converted from m/s to km/h (*3.6) to stay
+       consistent with the other speed columns in this pipeline.
+    5. pre_run_window_s_used = the window duration actually available
+       (may be shorter than the requested `pre_run_window_s` if the
+       movement starts near the beginning of the half).
+
+    Returns (pre_run_mean_vel_kmh, pre_run_peak_vel_kmh, pre_run_window_s_used),
+    all NaN if the window is empty/degenerate or pre_run_window_s is None/<=0.
+    """
+    if pre_run_window_s is None or pre_run_window_s <= 0:
+        return np.nan, np.nan, np.nan
+
+    pre_frames = int(round(pre_run_window_s * framerate))
+    pre_start  = max(0, start_frame - pre_frames)
+    pre_end    = start_frame   # window ends right where the movement starts (exclusive)
+
+    if pre_end <= pre_start:
+        return np.nan, np.nan, np.nan
+
+    v_pre = player_velocity[pre_start:pre_end]
+    v_pre_valid = v_pre[~np.isnan(v_pre)]
+
+    if v_pre_valid.size == 0:
+        return np.nan, np.nan, round((pre_end - pre_start) / framerate, 2)
+
+    pre_mean_kmh = float(np.mean(v_pre_valid)) * 3.6
+    pre_peak_kmh = float(np.max(v_pre_valid)) * 3.6
+    window_used_s = round((pre_end - pre_start) / framerate, 2)
+    return pre_mean_kmh, pre_peak_kmh, window_used_s
+
+
 def extract_movements_for_player(
         player_id, velocities, tracking_data, possession,
         min_valley_distance=15,
@@ -247,6 +396,7 @@ def extract_movements_for_player(
         power_threshold=6.0,
         min_segment_frames=10,
         framerate=25,
+        pre_run_window_s=PRE_RUN_WINDOW_S,
 ):
     player_velocity = velocities[:, player_id]
     vel_for_peaks   = np.where(np.isnan(player_velocity), 0.0, player_velocity)
@@ -305,6 +455,21 @@ def extract_movements_for_player(
         for s in sub:
             s = s.copy()
             s['movement_id'] = mov_idx
+
+            # Pre-run window indicators, computed against the player's FULL
+            # velocity series for the half (not just this sub-segment), so
+            # the look-back can reach into whatever preceded the movement.
+            pre_mean_kmh, pre_peak_kmh, pre_win_s = _compute_pre_run_window(
+                player_velocity, int(s['frame'].iloc[0]),
+                pre_run_window_s, framerate,
+            )
+            # Stored as constant columns (one value per movement, broadcast
+            # over all its frames) so they survive through to
+            # summarize_movements_to_dataframe the same way 'ec' does.
+            s['pre_run_mean_vel_kmh'] = pre_mean_kmh
+            s['pre_run_peak_vel_kmh'] = pre_peak_kmh
+            s['pre_run_window_s']     = pre_win_s
+
             movements.append(s)
             mov_idx += 1
 
@@ -319,6 +484,7 @@ def extract_discrete_movements_all_players(
         power_threshold=6.0,
         min_segment_frames=10,
         framerate=25,
+        pre_run_window_s=PRE_RUN_WINDOW_S,
 ):
     n_players = velocities.shape[1]
     return {
@@ -330,6 +496,7 @@ def extract_discrete_movements_all_players(
             power_threshold=power_threshold,
             min_segment_frames=min_segment_frames,
             framerate=framerate,
+            pre_run_window_s=pre_run_window_s,
         )
         for player_id in range(n_players)
     }
@@ -374,6 +541,29 @@ def summarize_movements_to_dataframe(movements_dict, teamsheet, framerate=25):
             dy = np.diff(y_vals)
             distance_m = float(np.sqrt(dx * dx + dy * dy).sum())
 
+            # Midpoint position of the movement.
+            # Methodology: the MEDIAN (not the mean) of x and y over all
+            # valid frames of the movement, matching the convention used in
+            # the manual-annotation enrichment tool. The median is robust
+            # to a movement that lingers briefly at one extremity (e.g. a
+            # player decelerating hard at the end), which would bias a
+            # simple mean toward that extremity.
+            x_mid = float(np.nanmedian(x_vals))
+            y_mid = float(np.nanmedian(y_vals))
+
+            # Pre-run window indicators — one constant value per movement,
+            # attached upstream in extract_movements_for_player() via
+            # _compute_pre_run_window(). Read the first row since the value
+            # is broadcast identically across the whole movement.
+            if 'pre_run_mean_vel_kmh' in df.columns:
+                pre_run_mean_vel_kmh = float(df['pre_run_mean_vel_kmh'].iloc[0])
+                pre_run_peak_vel_kmh = float(df['pre_run_peak_vel_kmh'].iloc[0])
+                pre_run_window_s_used = df['pre_run_window_s'].iloc[0]
+            else:
+                pre_run_mean_vel_kmh = float('nan')
+                pre_run_peak_vel_kmh = float('nan')
+                pre_run_window_s_used = float('nan')
+
             if 'ec' in df.columns:
                 ec_values = df['ec'].values
                 v_safe    = np.where(np.isnan(v_ms), 0.0, v_ms)
@@ -401,6 +591,8 @@ def summarize_movements_to_dataframe(movements_dict, teamsheet, framerate=25):
                 'jID':                    jersey_id,
                 'x_start':             float(x_vals[0]),
                 'y_start':             float(y_vals[0]),
+                'x_mid':               x_mid,
+                'y_mid':               y_mid,
                 'x_end':               float(x_vals[-1]),
                 'y_end':               float(y_vals[-1]),
                 'x_peak':              float(x_vals[peak_idx]),
@@ -411,6 +603,9 @@ def summarize_movements_to_dataframe(movements_dict, teamsheet, framerate=25):
                 'distance_m':          distance_m,
                 'duration_s':          len(df) / framerate,
                 'total_energy_cost_J': total_energy_cost,
+                'pre_run_mean_vel_kmh': pre_run_mean_vel_kmh,
+                'pre_run_peak_vel_kmh': pre_run_peak_vel_kmh,
+                'pre_run_window_s':     pre_run_window_s_used,
             })
 
     return pd.DataFrame(rows)
@@ -1013,6 +1208,215 @@ def _apply_blackout_mask(df_movements: pd.DataFrame,
 
 
 # ============================================================================
+# Goals, shots, scoreline and shot-follow-up flag
+# ============================================================================
+
+def parse_goals_and_shots(path_events, path_info, anchors, framerate=25):
+    """
+    Parse the events XML for goals and shots.
+
+    Elapsed times are expressed in seconds SINCE THE KICKOFF OF THE
+    RESPECTIVE HALF (0 at kickoff of either half) — the same "per_half"
+    convention as `_compute_elapsed_seconds_vectorized(..., per_half=True)`
+    in `process_match`, so movements and events can be compared directly.
+
+    Reuses the already-computed `anchors` (kickoff_utc, second_half_start_utc)
+    instead of re-deriving them, so the half boundary is guaranteed
+    consistent with the rest of the pipeline (kickoff/blackout detection).
+
+    Returns (df_goals, df_shots):
+      df_goals: one row per goal, columns
+                [half, elapsed_s, scoring_team, home_score, away_score]
+                home_score/away_score = CUMULATIVE score right after this goal.
+      df_shots: one row per shot attempt (goals included), columns
+                [half, elapsed_s, team, shot_type]
+    """
+    kickoff_utc            = anchors['kickoff_utc']
+    second_half_start_utc  = anchors['second_half_start_utc']
+
+    info_root = ET.parse(path_info).getroot()
+    home_team_id = away_team_id = None
+    for el in info_root.iter():
+        role = el.get('Role', '')
+        tid  = el.get('TeamId') or el.get('TeamID', '')
+        if not tid:
+            continue
+        if role == 'home':
+            home_team_id = tid
+        elif role in ('guest', 'away'):
+            away_team_id = tid
+
+    SHOT_TAGS = {'ShotAtGoal', 'ShotOnTarget', 'ShotOffTarget',
+                 'SavedShot', 'ShotWide', 'ShotHigh', 'BlockedShot'}
+
+    ev_root = ET.parse(path_events).getroot()
+
+    goal_rows, shot_rows = [], []
+    home_score = away_score = 0
+
+    for event in ev_root.findall('Event'):
+        t_str = event.attrib.get('EventTime')
+        if not t_str:
+            continue
+        event_utc = pd.Timestamp(t_str).tz_convert('UTC')
+
+        if event_utc < second_half_start_utc:
+            half      = 'firstHalf'
+            elapsed_s = (event_utc - kickoff_utc).total_seconds()
+        else:
+            half      = 'secondHalf'
+            elapsed_s = (event_utc - second_half_start_utc).total_seconds()
+        if elapsed_s < 0:
+            continue
+
+        # Descend into all descendants: a shot tag can be a direct child of
+        # <Event> or wrapped inside <Penalty>, <FreeKick>, etc.
+        for shot_el in event.iter():
+            if shot_el.tag not in SHOT_TAGS:
+                continue
+
+            team_id   = shot_el.get('Team', '')
+            shot_team = 'Home' if team_id == home_team_id else 'Away'
+
+            shot_rows.append({'half': half, 'elapsed_s': elapsed_s,
+                              'team': shot_team, 'shot_type': shot_el.tag})
+
+            # A goal is a <SuccessfulShot> direct child of the shot tag.
+            goal_el = shot_el.find('SuccessfulShot')
+            if goal_el is not None:
+                if shot_team == 'Home':
+                    home_score += 1
+                else:
+                    away_score += 1
+                goal_rows.append({'half': half, 'elapsed_s': elapsed_s,
+                                  'scoring_team': shot_team,
+                                  'home_score': home_score, 'away_score': away_score})
+
+    df_goals = (pd.DataFrame(goal_rows) if goal_rows else
+                pd.DataFrame(columns=['half', 'elapsed_s', 'scoring_team',
+                                      'home_score', 'away_score']))
+    df_shots = (pd.DataFrame(shot_rows) if shot_rows else
+                pd.DataFrame(columns=['half', 'elapsed_s', 'team', 'shot_type']))
+
+    print(f"[OK] events for scoreline/shots — {len(df_goals)} goal(s), {len(df_shots)} shot(s).")
+    return df_goals, df_shots
+
+
+def compute_scoreline_vectorized(elapsed_s_arr, half_arr, df_goals):
+    """
+    Vectorised lookup of the scoreline in effect at the moment (half,
+    elapsed_s) of each movement's start.
+
+    Methodology
+    -----------
+    Processed one half at a time (goals in the other half are irrelevant):
+      1. Goals of that half are sorted by `elapsed_s`.
+      2. For every movement, `np.searchsorted(goal_elapsed_sorted,
+         elapsed_s, side='right') - 1` gives the index of the LAST goal
+         that occurred at or before the movement's `elapsed_s` — i.e. the
+         goal that set the scoreline currently in effect.
+      3. If no such goal exists (movement occurs before the half's first
+         goal, or the half has no goals at all), the scoreline defaults to
+         "0-0" (home_score = away_score = 0).
+
+    Returns (scoreline_str_array, home_score_array, away_score_array), all
+    aligned with `elapsed_s_arr` / `half_arr`.
+    """
+    n = len(elapsed_s_arr)
+    home_out = np.zeros(n, dtype=int)
+    away_out = np.zeros(n, dtype=int)
+
+    for half_val in np.unique(half_arr):
+        mask = half_arr == half_val
+        goals_half = df_goals[df_goals['half'] == half_val].sort_values('elapsed_s')
+        if goals_half.empty:
+            continue
+
+        g_elapsed = goals_half['elapsed_s'].values
+        g_home    = goals_half['home_score'].values
+        g_away    = goals_half['away_score'].values
+
+        idx   = np.searchsorted(g_elapsed, elapsed_s_arr[mask], side='right') - 1
+        valid = idx >= 0
+
+        sub_home = np.zeros(int(mask.sum()), dtype=int)
+        sub_away = np.zeros(int(mask.sum()), dtype=int)
+        sub_home[valid] = g_home[idx[valid]]
+        sub_away[valid] = g_away[idx[valid]]
+
+        home_out[mask] = sub_home
+        away_out[mask] = sub_away
+
+    scoreline_arr = np.array([f"{h}-{a}" for h, a in zip(home_out, away_out)], dtype=object)
+    return scoreline_arr, home_out, away_out
+
+
+def compute_goal_indicator_vectorized(home_score_arr, away_score_arr, location_arr):
+    """
+    Signed goal-deficit indicator for each movement, from the perspective
+    of the team performing it (`location_arr`, 'Home'/'Away').
+
+    diff = away_score - home_score  (positive => Away is leading)
+      - movement performed by Away team -> indicator =  diff
+      - movement performed by Home team -> indicator = -diff
+
+    So the indicator is always POSITIVE when the performing team is
+    leading, NEGATIVE when trailing, and 0 when level — regardless of
+    which side (Home/Away) the team is on.
+    """
+    diff    = away_score_arr - home_score_arr
+    is_away = np.asarray(location_arr) == 'Away'
+    return np.where(is_away, diff, -diff)
+
+
+def flag_shot_within_window_vectorized(half_arr, location_arr, end_elapsed_s_arr,
+                                       df_shots, window_s):
+    """
+    Vectorised version of "did this movement's team take a shot within
+    `window_s` seconds AFTER the movement ended (same half)?".
+
+    Methodology
+    -----------
+    Merge-based approach (same style as `tag_ball_touches`), avoiding a
+    per-row Python loop:
+      1. Build a small per-movement frame with (half, team, end_elapsed_s).
+      2. Left-merge it against all shots on (half, team) — this creates
+         one row per (movement, candidate shot) pair sharing the same half
+         and team.
+      3. Keep only pairs where the shot's `elapsed_s` falls in
+         [end_elapsed_s, end_elapsed_s + window_s].
+      4. A movement is flagged True if AT LEAST ONE such pair survives.
+
+    Returns a boolean np.ndarray aligned with the inputs.
+    """
+    n = len(end_elapsed_s_arr)
+    if df_shots.empty or window_s is None:
+        return np.zeros(n, dtype=bool)
+
+    df_m = pd.DataFrame({
+        'half':          np.asarray(half_arr),
+        'team':          np.asarray(location_arr),
+        'end_elapsed_s': np.asarray(end_elapsed_s_arr),
+        '_idx':          np.arange(n),
+    })
+    shots = (df_shots[['half', 'team', 'elapsed_s']]
+             .rename(columns={'elapsed_s': 'shot_elapsed_s'}))
+
+    merged = df_m.merge(shots, on=['half', 'team'], how='left')
+    in_window = (
+        merged['shot_elapsed_s'].notna()
+        & (merged['shot_elapsed_s'] >= merged['end_elapsed_s'])
+        & (merged['shot_elapsed_s'] <= merged['end_elapsed_s'] + window_s)
+    )
+    flagged_idx = merged.loc[in_window, '_idx'].unique()
+
+    flag = np.zeros(n, dtype=bool)
+    if len(flagged_idx) > 0:
+        flag[flagged_idx] = True
+    return flag
+
+
+# ============================================================================
 # Main pipeline
 # ============================================================================
 
@@ -1027,6 +1431,8 @@ def process_match(
         min_segment_frames  = 10,
         framerate           = 25,
         speed_thresholds    = None,
+        pre_run_window_s    = PRE_RUN_WINDOW_S,
+        shot_window_s       = SHOT_WINDOW_S,
 ):
     if speed_thresholds is None:
         speed_thresholds = SPEED_THRESHOLDS
@@ -1122,19 +1528,43 @@ def process_match(
     # ------------------------------------------------------------------
     H2_BASE_SECONDS = 45 * 60
 
-    # Vectorised timecode computation — replaces two lambda apply() calls
+    # Vectorised elapsed-time computation, shared by the timecode formatter
+    # below and by the scoreline / shot-flag lookups further down the
+    # pipeline (both need elapsed seconds since kickoff).
+    def _compute_elapsed_seconds_vectorized(frames_arr, half_labels, kickoff_h1, kickoff_h2,
+                                             per_half=False):
+        """
+        frames_arr  : np.ndarray (int) — raw tracking-array frame indices
+        half_labels : pd.Series or np.ndarray of str ('firstHalf'/'secondHalf')
+        per_half    : if False (default), returns CONTINUOUS match seconds
+                      (0 at H1 kickoff, 45*60+x during H2) — used for display
+                      timecodes. If True, returns seconds elapsed SINCE THE
+                      KICKOFF OF THE RESPECTIVE HALF (0 at kickoff of either
+                      half) — used to compare against goal/shot timestamps,
+                      which are themselves stored per-half.
+        """
+        is_h1 = np.asarray(half_labels) == 'firstHalf'
+        if per_half:
+            elapsed_s = np.where(
+                is_h1,
+                (frames_arr - kickoff_h1) / framerate,
+                (frames_arr - kickoff_h2) / framerate,
+            )
+        else:
+            elapsed_s = np.where(
+                is_h1,
+                (frames_arr - kickoff_h1) / framerate,
+                (frames_arr - kickoff_h2) / framerate + H2_BASE_SECONDS,
+            )
+        return np.maximum(elapsed_s, 0.0)
+
     def _compute_timecodes_vectorized(frames_arr, half_labels, kickoff_h1, kickoff_h2):
         """
         frames_arr  : np.ndarray (int)
         half_labels : pd.Series or np.ndarray of str
         """
-        is_h1    = np.asarray(half_labels) == 'firstHalf'
-        video_s  = np.where(
-            is_h1,
-            (frames_arr - kickoff_h1) / framerate,
-            (frames_arr - kickoff_h2) / framerate + H2_BASE_SECONDS,
-        )
-        video_s  = np.maximum(video_s, 0.0)
+        video_s = _compute_elapsed_seconds_vectorized(
+            frames_arr, half_labels, kickoff_h1, kickoff_h2, per_half=False)
         # sec_to_minute is scalar (string formatting) — one pass is unavoidable,
         # but it is called only once per column.
         return np.fromiter((sec_to_minute(s) for s in video_s),
@@ -1164,6 +1594,7 @@ def process_match(
                 power_threshold=power_threshold,
                 min_segment_frames=min_segment_frames,
                 framerate=framerate,
+                pre_run_window_s=pre_run_window_s,
             )
 
             summary_df = summarize_movements_to_dataframe(
@@ -1242,6 +1673,55 @@ def process_match(
     df_movements["match_id"]    = match_id
 
     # ------------------------------------------------------------------
+    # 8b. Pitch zones (D/M/A x 1-5) — start / mid / end
+    # Reuses `player_direction` (the same per-movement playing-direction
+    # string computed just above for the continuous `direction` metric),
+    # so zone assignment and direction metrics are always consistent with
+    # each other. See assign_zone() for the full methodology.
+    # ------------------------------------------------------------------
+    df_movements["zone_start"] = [
+        assign_zone(x, y, direction=d)
+        for x, y, d in zip(df_movements["x_start"], df_movements["y_start"], player_direction)
+    ]
+    df_movements["zone_mid"] = [
+        assign_zone(x, y, direction=d)
+        for x, y, d in zip(df_movements["x_mid"], df_movements["y_mid"], player_direction)
+    ]
+    df_movements["zone_end"] = [
+        assign_zone(x, y, direction=d)
+        for x, y, d in zip(df_movements["x_end"], df_movements["y_end"], player_direction)
+    ]
+
+    # ------------------------------------------------------------------
+    # 8c. Scoreline, goal indicator, and shot-within-window flag
+    # Reuses `anchors` (kickoff_utc / second_half_start_utc) so the half
+    # boundary used for goal/shot timestamps matches the rest of the
+    # pipeline exactly (kickoff detection, blackout windows, etc.).
+    # ------------------------------------------------------------------
+    df_goals, df_shots = parse_goals_and_shots(
+        path_events, path_info, anchors, framerate=framerate)
+
+    # Elapsed seconds SINCE THE KICKOFF OF THE RESPECTIVE HALF (per_half=True),
+    # matching the convention used when parsing goals/shots above.
+    start_elapsed_s = _compute_elapsed_seconds_vectorized(
+        df_movements["start_frame"].values, df_movements["half"].values,
+        h1_kickoff, h2_kickoff, per_half=True)
+    end_elapsed_s = _compute_elapsed_seconds_vectorized(
+        df_movements["end_frame"].values, df_movements["half"].values,
+        h1_kickoff, h2_kickoff, per_half=True)
+
+    scoreline_arr, home_score_arr, away_score_arr = compute_scoreline_vectorized(
+        start_elapsed_s, df_movements["half"].values, df_goals)
+    df_movements["scoreline_at_run_start"] = scoreline_arr
+    df_movements["goal_indicator"] = compute_goal_indicator_vectorized(
+        home_score_arr, away_score_arr, df_movements["location"].values)
+
+    shot_col = f"shot_within_{int(shot_window_s)}s" if shot_window_s is not None else "shot_within_Ns"
+    df_movements[shot_col] = flag_shot_within_window_vectorized(
+        df_movements["half"].values, df_movements["location"].values,
+        end_elapsed_s, df_shots, shot_window_s)
+
+    # ------------------------------------------------------------------
     # 9. Tag ball touches (no re-parse)
     # ------------------------------------------------------------------
     df_movements = tag_ball_touches(
@@ -1271,6 +1751,39 @@ def process_match(
             min_frame = sub['start_frame'].min()
             min_tc    = sub.loc[sub['start_frame'].idxmin(), 'start_timecode']
             print(f"    earliest surviving movement in {half}: frame {min_frame} ({min_tc})")
+
+    # ------------------------------------------------------------------
+    # 11. Final column ordering
+    # Group columns by theme (identifiers -> timing -> kinematics ->
+    # pre-run window -> spatial/zones -> possession -> match context)
+    # so the exported CSV reads logically from left to right.
+    # Any column not explicitly listed (e.g. future additions) is appended
+    # at the end automatically, so this never silently drops data.
+    # ------------------------------------------------------------------
+    preferred_order = [
+        # Identifiers
+        'match_id', 'half', 'location', 'team', 'player', 'jID', 'xID', 'position',
+        # Timing
+        'start_frame', 'end_frame', 'peak_frame',
+        'start_timecode', 'end_timecode', 'duration_s',
+        # Kinematics
+        'peak_speed_kmh', 'avg_velocity_kmh', 'speed_category',
+        'distance_m', 'total_energy_cost_J',
+        # Pre-run window (see _compute_pre_run_window)
+        'pre_run_mean_vel_kmh', 'pre_run_peak_vel_kmh', 'pre_run_window_s',
+        # Spatial (see summarize_movements_to_dataframe / assign_zone)
+        'x_start', 'y_start', 'zone_start',
+        'x_mid', 'y_mid', 'zone_mid',
+        'x_end', 'y_end', 'zone_end',
+        'direction', 'attack_sign',
+        # Possession / ball touches
+        'possession', 'possession_ratio', 'possession_contested', 'has_ball_touch',
+        # Match context
+        'scoreline_at_run_start', 'goal_indicator', shot_col,
+    ]
+    ordered_cols   = [c for c in preferred_order if c in df_movements.columns]
+    remaining_cols = [c for c in df_movements.columns if c not in ordered_cols]
+    df_movements   = df_movements[ordered_cols + remaining_cols]
 
     print(f"[OK] {match_id} — {len(df_movements)} discrete movements extracted.")
     return df_movements, df_distances, dict_trajectories
