@@ -67,17 +67,17 @@ PRE_RUN_WINDOW_S = 2.0      # k, in seconds
 # automated segment.  Candidates below this threshold are left as NaN.
 MIN_IOU = 0.01               # 0 = accept any overlap; 1 = perfect match only
 
-# ── Réutilisation des métriques déjà calculées par la pipeline auto ────────
-# Les fichiers runs_behind_{match_id}.csv (AUTO_OUTPUT_DIR) sont les
-# mouvements déjà extraits ET dont les indicateurs cinématiques (distance,
-# vitesse, zones, pre-run window...) ont DÉJÀ été calculés par
-# Discretisation_optimised2_1.py. Quand une annotation est matchée à l'un de
-# ces mouvements automatiques (via find_best_segment / IoU >= MIN_IOU), il
-# est donc inutile de recharger les positions XML et de tout recalculer :
-# on reprend directement les valeurs déjà présentes dans runs_behind_*.csv
-# (avec conversion d'unités km/h → m/s, voir _auto_row_to_indicators()).
-# Seules les annotations SANS match automatique (ou avec un match dont les
-# indicateurs sont manquants) déclenchent encore extract_run_indicators().
+# ── Reuse metrics already computed by the automated pipeline ───────────────
+# The runs_behind_{match_id}.csv files (AUTO_OUTPUT_DIR) are the movements
+# already extracted AND whose kinematic indicators (distance, speed, zones,
+# pre-run window...) have ALREADY been computed by
+# Discretisation_optimised2_1.py. When an annotation is matched to one of
+# these automated movements (via find_best_segment / IoU >= MIN_IOU), there
+# is no need to reload the raw XML positions and recompute everything: the
+# values already present in runs_behind_*.csv are reused directly (with a
+# km/h → m/s unit conversion, see _auto_row_to_indicators()).
+# Only annotations WITHOUT an automated match (or with a match whose
+# indicators are missing) still trigger extract_run_indicators().
 REUSE_AUTO_METRICS = True
 
 # Butterworth filter parameters 
@@ -336,7 +336,7 @@ def parse_events_xml(match_id: str, data_dir: str) -> dict:
     path_events = find_dfl_file(data_dir, match_id, "events")
     path_info   = find_dfl_file(data_dir, match_id, "matchinformation")
 
-    # ── Kickoff UTC depuis matchinfo ──────────────────────────────────────
+    # ── Kickoff UTC from matchinfo ───────────────────────────────────────
     info_root   = ET.parse(path_info).getroot()
     kickoff_str = info_root.find(".//KickoffTime")
     kickoff_utc = (pd.Timestamp(kickoff_str.text).tz_convert("UTC")
@@ -357,9 +357,9 @@ def parse_events_xml(match_id: str, data_dir: str) -> dict:
     # ── Parse events XML ──────────────────────────────────────────────────
     ev_root = ET.parse(path_events).getroot()
 
-    # 1er passage : trouver les kickoffs via GameSection (fiable)
-    # Le XML peut contenir plusieurs KickOff (reprise après but, etc.)
-    # → on se base sur GameSection="firstHalf" / "secondHalf"
+    # First pass: find kickoffs via GameSection (reliable)
+    # The XML may contain several KickOff events (restart after a goal, etc.)
+    # → we rely on GameSection="firstHalf" / "secondHalf"
     kickoff_utc_from_xml = None
     second_half_utc      = None
     all_kickoff_times    = []
@@ -379,8 +379,8 @@ def parse_events_xml(match_id: str, data_dir: str) -> dict:
             elif section == "secondHalf" and second_half_utc is None:
                 second_half_utc = ts
 
-    # Si GameSection absent : fallback — premier kickoff = 1re mi-temps,
-    # puis chercher un gap > 10 min pour trouver la 2e mi-temps
+    # If GameSection is absent: fallback — first kickoff = 1st half,
+    # then look for a gap > 10 min to find the start of the 2nd half
     all_kickoff_times.sort()
     if not all_kickoff_times:
         raise ValueError(f"No KickOff events found for match {match_id}")
@@ -391,18 +391,18 @@ def parse_events_xml(match_id: str, data_dir: str) -> dict:
     if second_half_utc is None:
         for i in range(1, len(all_kickoff_times)):
             gap = (all_kickoff_times[i] - all_kickoff_times[i - 1]).total_seconds()
-            if gap > 600:   # pause > 10 min → début de la 2e mi-temps
+            if gap > 600:   # pause > 10 min → start of the 2nd half
                 second_half_utc = all_kickoff_times[i]
                 break
 
-    # Priorité au kickoff trouvé dans matchinfo, sinon celui du XML
+    # Prefer the kickoff found in matchinfo, fall back to the one from the XML
     if kickoff_utc is None:
         kickoff_utc = kickoff_utc_from_xml
 
     print(f"  Kickoff 1st half : {kickoff_utc}")
     print(f"  Kickoff 2nd half : {second_half_utc}")
 
-    # Tags qui indiquent un tir (peu importe le niveau de profondeur)
+    # Tags that indicate a shot (regardless of nesting depth)
     SHOT_TAGS = {"ShotAtGoal", "ShotOnTarget", "ShotOffTarget",
                  "SavedShot", "ShotWide", "ShotHigh", "BlockedShot"}
 
@@ -418,13 +418,13 @@ def parse_events_xml(match_id: str, data_dir: str) -> dict:
         event_utc = pd.Timestamp(t_str).tz_convert("UTC")
         elapsed_s, half = _utc_to_elapsed(event_utc, kickoff_utc, second_half_utc)
 
-        # Descendre dans tous les descendants pour trouver ShotAtGoal
-        # (peut être enfant direct OU wrappé dans <Penalty>, <FreeKick>, etc.)
+        # Walk all descendants to find ShotAtGoal
+        # (may be a direct child OR wrapped in <Penalty>, <FreeKick>, etc.)
         for shot_el in event.iter():
             if shot_el.tag not in SHOT_TAGS:
                 continue
 
-            # Team est un attribut du tag shot lui-même
+            # Team is an attribute of the shot tag itself
             team_id   = shot_el.get("Team", "")
             shot_team = "Home" if team_id == home_team_id else "Away"
 
@@ -435,7 +435,7 @@ def parse_events_xml(match_id: str, data_dir: str) -> dict:
                 "shot_type": shot_el.tag,
             })
 
-            # But = SuccessfulShot enfant direct du tag shot
+            # Goal = SuccessfulShot direct child of the shot tag
             goal_el = shot_el.find("SuccessfulShot")
             if goal_el is not None:
                 if shot_team == "Home":
@@ -672,13 +672,13 @@ def load_automated_segments(match_id: str, auto_output_dir: str) -> pd.DataFrame
 
     df = pd.read_csv(hits[0])
     if "segment_id" not in df.columns:
-        # segment_id = identifiant technique 0-based, stable, utilisé pour
-        # toute jointure/lookup en aval (df.iloc[segment_id], filtres, etc.)
+        # segment_id = stable 0-based technical identifier, used for any
+        # downstream join/lookup (df.iloc[segment_id], filters, etc.)
         df.insert(0, "segment_id", range(len(df)))
     if "excel_row" not in df.columns:
-        # excel_row = numéro de ligne tel qu'affiché dans Excel/LibreOffice
-        # (+1 pour l'en-tête, +1 car Excel est 1-based) — UNIQUEMENT pour
-        # vérification visuelle humaine, ne jamais l'utiliser dans la logique.
+        # excel_row = row number as displayed in Excel/LibreOffice
+        # (+1 for the header, +1 because Excel is 1-based) — ONLY for
+        # manual visual verification, never use it in the logic.
         df.insert(1, "excel_row", df.index + 2)
     return df
 
@@ -700,20 +700,19 @@ def _temporal_iou(a_start: float, a_end: float,
 
 def find_best_segment(annot_row, df_auto, min_iou=0.01):
     """
-    Trouve le meilleur segment automatique (IoU max) pour une ligne
-    d'annotation.
+    Find the best automated segment (max IoU) for an annotation row.
 
-    Retourne (best_seg_id, best_excel_row, best_iou, matched_row) où
-    matched_row est la pd.Series complète du meilleur candidat dans df_auto
-    (utile pour réutiliser ses indicateurs déjà calculés sans recalcul),
-    ou None si aucun match n'a été trouvé / accepté.
+    Returns (best_seg_id, best_excel_row, best_iou, matched_row) where
+    matched_row is the full pd.Series of the best candidate in df_auto
+    (useful to reuse its already-computed indicators without recomputing),
+    or None if no match was found / accepted.
     """
     if df_auto.empty:
         return None, None, 0.0, None
 
     raw_jid = annot_row["player_jid"]
     if pd.isna(raw_jid):
-        print(f"    [WARN] player_jid manquant pour segment {annot_row.get('segment_id', '?')}")
+        print(f"    [WARN] Missing player_jid for segment {annot_row.get('segment_id', '?')}")
         return None, None, 0.0, None
 
     ann_jid   = int(raw_jid)
@@ -721,32 +720,32 @@ def find_best_segment(annot_row, df_auto, min_iou=0.01):
     ann_end   = annot_row["end_frame"]
     ann_half  = annot_row["half"]
 
-    # ── Filtrer half ──────────────────────────────────────────────────────
+    # ── Filter by half ───────────────────────────────────────────────────
     df_half = df_auto[df_auto["half"] == ann_half] if "half" in df_auto.columns else df_auto.copy()
     if df_half.empty:
-        print(f"    [WARN] seg {annot_row['segment_id']}: aucun run dans half='{ann_half}' "
-              f"(valeurs présentes: {df_auto['half'].unique() if 'half' in df_auto.columns else 'N/A'})")
+        print(f"    [WARN] seg {annot_row['segment_id']}: no run in half='{ann_half}' "
+              f"(values present: {df_auto['half'].unique() if 'half' in df_auto.columns else 'N/A'})")
         return None, None, 0.0, None
 
-    # ── Filtrer joueur ────────────────────────────────────────────────────
+    # ── Filter by player ─────────────────────────────────────────────────
     jid_col = next((c for c in df_half.columns
                     if c.lower() in ("jid", "player_jid", "jersey")), None)
 
     if jid_col is None:
-        print(f"    [WARN] seg {annot_row['segment_id']}: colonne jID introuvable "
-              f"(colonnes: {list(df_half.columns)})")
+        print(f"    [WARN] seg {annot_row['segment_id']}: jID column not found "
+              f"(columns: {list(df_half.columns)})")
         return None, None, 0.0, None
 
-    # Comparer en float pour éviter tout problème de type
+    # Compare as float to avoid any type mismatch
     df_player = df_half[df_half[jid_col].astype(float) == float(ann_jid)]
 
     if df_player.empty:
         uniq = sorted(df_half[jid_col].dropna().astype(int).unique())
-        print(f"    [WARN] seg {annot_row['segment_id']}: jID={ann_jid} absent dans runs "
-              f"(joueurs présents dans ce half: {uniq})")
+        print(f"    [WARN] seg {annot_row['segment_id']}: jID={ann_jid} absent from runs "
+              f"(players present in this half: {uniq})")
         return None, None, 0.0, None
 
-    # ── IoU sur les frames ────────────────────────────────────────────────
+    # ── IoU on frames ────────────────────────────────────────────────────
     inter = np.maximum(0.0,
         np.minimum(df_player["end_frame"].values,   ann_end) -
         np.maximum(df_player["start_frame"].values, ann_start))
@@ -763,10 +762,10 @@ def find_best_segment(annot_row, df_auto, min_iou=0.01):
           #f"(run frames=[{df_player.iloc[best_idx]['start_frame']},{df_player.iloc[best_idx]['end_frame']}])")
 
     if best_iou < min_iou:
-        print(f"    [WARN] seg {annot_row['segment_id']}: best_iou={best_iou:.4f} < min_iou={min_iou} → non matché")
+        print(f"    [WARN] seg {annot_row['segment_id']}: best_iou={best_iou:.4f} < min_iou={min_iou} → not matched")
         return None, None, best_iou, None
 
-    # ── Récupérer l'identifiant du segment (0-based, pour la logique) ─────
+    # ── Retrieve the segment identifier (0-based, for logic) ───────────────
     seg_id_col = next((c for c in df_player.columns
                        if c.lower() in ("segment_id", "seg_id", "xid", "id")), None)
     if seg_id_col is None:
@@ -774,7 +773,7 @@ def find_best_segment(annot_row, df_auto, min_iou=0.01):
     else:
         best_seg_id = int(df_player.iloc[best_idx][seg_id_col])
 
-    # ── Ligne Excel correspondante (uniquement pour vérif visuelle) ───────
+    # ── Corresponding Excel row (visual verification only) ─────────────────
     if "excel_row" in df_player.columns:
         best_excel_row = int(df_player.iloc[best_idx]["excel_row"])
     else:
@@ -806,13 +805,13 @@ def flag_shot_within_window(elapsed_s: float, half: str, run_team: str,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# HELPERS: Réutiliser les indicateurs déjà calculés par la pipeline auto
+# HELPERS: Reuse indicators already computed by the automated pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Mapping "colonne INDICATOR_COLS attendue en sortie" -> "colonne équivalente
-# dans runs_behind_{match_id}.csv (df_auto)". Les colonnes de vitesse de
-# df_auto sont en km/h ; le pipeline d'enrichissement attend du m/s, d'où la
-# conversion (/3.6) appliquée dans _auto_row_to_indicators().
+# Mapping "expected output INDICATOR_COLS column" -> "equivalent column in
+# runs_behind_{match_id}.csv (df_auto)". The speed columns in df_auto are in
+# km/h; the enrichment pipeline expects m/s, hence the (/3.6) conversion
+# applied in _auto_row_to_indicators().
 _AUTO_COL_MAP = {
     "length_m":            "distance_m",
     "duration_s":          "duration_s",
@@ -830,18 +829,18 @@ _AUTO_COL_MAP = {
     "zone_start":          "zone_start",
     "zone_end":            "zone_end",
 }
-# Colonnes dont la valeur source est en km/h et doit être divisée par 3.6
-# pour obtenir du m/s.
+# Columns whose source value is in km/h and must be divided by 3.6
+# to obtain m/s.
 _AUTO_KMH_COLS = {"mean_vel_ms", "peak_vel_ms", "pre_run_mean_vel_ms", "pre_run_peak_vel_ms"}
 
 
 def _auto_row_to_indicators(auto_row: pd.Series, indicator_cols: list) -> dict | None:
     """
-    Construit un dict d'indicateurs (mêmes clés que INDICATOR_COLS) à partir
-    d'une ligne déjà calculée de df_auto (runs_behind_{match_id}.csv).
+    Build an indicators dict (same keys as INDICATOR_COLS) from an
+    already-computed row of df_auto (runs_behind_{match_id}.csv).
 
-    Retourne None si une colonne source attendue est absente du DataFrame
-    auto (auquel cas l'appelant doit recalculer depuis les positions brutes).
+    Returns None if an expected source column is missing from the auto
+    DataFrame (in which case the caller must recompute from raw positions).
     """
     out = {}
     for target_col in indicator_cols:
@@ -856,7 +855,7 @@ def _auto_row_to_indicators(auto_row: pd.Series, indicator_cols: list) -> dict |
 
 
 def _indicators_complete(indicators: dict, indicator_cols: list) -> bool:
-    """True si toutes les colonnes d'indicateurs sont présentes et non-NaN."""
+    """True if all indicator columns are present and non-NaN."""
     for col in indicator_cols:
         if col not in indicators:
             return False
@@ -924,15 +923,15 @@ def process_annotation_file(annot_path: str,
 
     use_reuse_auto_metrics = reuse_auto_metrics
 
-    # ── 2. Position data: chargement PARESSEUX (lazy) ──────────────────────
-    # On ne charge les positions XML + teamsheets que si au moins une ligne
-    # n'est pas déjà entièrement présente dans le cache — ce chargement est
-    # la partie la plus coûteuse du pipeline (Butterworth + VelocityModel).
+    # ── 2. Position data: LAZY loading ──────────────────────────────────────
+    # We only load the XML positions + teamsheets if at least one row is not
+    # already fully covered by a reused auto match — this loading is the
+    # most expensive part of the pipeline (Butterworth + VelocityModel).
     _pos_lazy = {"xy_dict": None, "pid_to_xid": None, "loaded": False}
 
     def _get_position_data():
         if not _pos_lazy["loaded"]:
-            print("  Loading position data (cache miss → calcul nécessaire) …")
+            print("  Loading position data (no auto match available → computation needed) …")
             xy_dict_, teamsheets_, _pitch_ = load_position_data(match_id, data_dir)
             _pos_lazy["xy_dict"]     = xy_dict_
             _pos_lazy["pid_to_xid"]  = build_person_id_to_xid(teamsheets_)
@@ -958,7 +957,7 @@ def process_annotation_file(annot_path: str,
             jid_to_pid_fallback[int(p["jID"])] = p["person_id"]
 
     print(f"  Player map: {len(df_players)} players "
-          f"(mapping vers xID chargé à la demande, en cas de cache miss)")
+          f"(mapping to xID loaded on demand, on auto-match miss)")
 
     # ── 4. Event data (goals + shots) ─────────────────────────────────────
     print("  Parsing event data …")
@@ -1028,17 +1027,17 @@ def process_annotation_file(annot_path: str,
             print(f"    [WARN] Row {row_idx} (segment {row['segment_id']}) — "
                   f"could not resolve PersonId for jID={jid_val}, team={team_loc}")
 
-        # ── 6c. Kinematic indicators — réutilisés depuis df_auto si possible ──
-        # Si l'annotation est matchée à un mouvement automatique, ce dernier a
-        # déjà tous ces indicateurs calculés (Discretisation_optimised2_1.py)
-        # → on les reprend directement, sans recharger les positions XML.
+        # ── 6c. Kinematic indicators — reused from df_auto if possible ──────
+        # If the annotation is matched to an automated movement, the latter
+        # already has all these indicators computed (Discretisation_optimised2_1.py)
+        # → reuse them directly, without reloading the XML positions.
         indicators = None
         if use_reuse_auto_metrics and auto_matched_row is not None:
             indicators = _auto_row_to_indicators(auto_matched_row, INDICATOR_COLS)
             if indicators is not None and _indicators_complete(indicators, INDICATOR_COLS):
                 n_reused_from_auto += 1
             else:
-                indicators = None   # colonnes manquantes/NaN → on recalculera
+                indicators = None   # missing/NaN columns → will recompute
 
         if indicators is None:
             if person_id is None or sf_val is None or ef_val is None:
@@ -1102,8 +1101,8 @@ def process_annotation_file(annot_path: str,
         out = {
             # Identifiers
             "annotation_segment_id": _safe_int(row["segment_id"]),
-            "auto_segment_id":       auto_seg_id,          # ID 0-based, à utiliser pour toute analyse/jointure
-            "auto_segment_excel_row": auto_excel_row,       # ligne Excel — vérif visuelle uniquement
+            "auto_segment_id":       auto_seg_id,          # 0-based ID, use for any analysis/join
+            "auto_segment_excel_row": auto_excel_row,       # Excel row — visual check only
             "match_iou":             match_iou if auto_seg_id is not None else np.nan,
             "match_id":              match_id,
             "half":                  half,
@@ -1145,8 +1144,8 @@ def process_annotation_file(annot_path: str,
     n_matched = df_enriched["auto_segment_id"].notna().sum()
     print(f"  ✓ {len(df_enriched)} runs enriched "
           f"({n_matched} matched to automated segments, "
-          f"{n_reused_from_auto} indicateurs réutilisés depuis runs_behind_*.csv "
-          f"— pas de recalcul depuis les positions brutes)")
+          f"{n_reused_from_auto} indicators reused from runs_behind_*.csv "
+          f"— no recomputation from raw positions)")
 
     return df_enriched
 
