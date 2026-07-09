@@ -115,7 +115,7 @@ ZONE_TARGET_DIRECTION = "right_to_left"
 #
 # Combined: 3 thirds × 5 channels = 15 zones, labelled as e.g. "D1", "M3", "A5"
 #   Third prefix: D = defensive, M = middle, A = attacking
-#   Channel suffix 1–5 from bottom (negative y) to top (positive y)
+#   Channel suffix R, HR, C, HL,L (Right, Half Right, Center, Half Left, Left) from bottom (negative y) to top (positive y)
 
 THIRD_BOUNDARIES_X = [-17.5, 17.5]                # two cut-points → three thirds
 CHANNEL_BOUNDARIES_Y = [-20.16, -3.66, 3.66, 20.16]  # four cut-points → five channels
@@ -168,7 +168,7 @@ def get_play_direction(match_id: str, team: str, half: str,
 
 
 def assign_zone(x: float, y: float, direction: str | None = None,
-                target: str = ZONE_TARGET_DIRECTION) -> str:
+                target: str = ZONE_TARGET_DIRECTION) -> tuple[str, str]:
     """
     Return a zone label like 'D1', 'M3', 'A5' for a given (x, y) position.
 
@@ -188,8 +188,17 @@ def assign_zone(x: float, y: float, direction: str | None = None,
     else:
         third = "A"
     # Vertical channel (1 = most negative y)
-    channel = int(np.searchsorted(CHANNEL_BOUNDARIES_Y, y)) + 1  # 1–5
-    return f"{third}{channel}"
+    if y < CHANNEL_BOUNDARIES_Y[0]:
+        channel = "R"
+    elif y < CHANNEL_BOUNDARIES_Y[1]:
+        channel = "HR"
+    elif y < CHANNEL_BOUNDARIES_Y[2]:
+        channel = "C"
+    elif y < CHANNEL_BOUNDARIES_Y[3]:
+        channel = "HL"
+    else:
+        channel = "L"
+    return third, channel
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -624,8 +633,12 @@ def extract_run_indicators(start_frame: int, end_frame: int,
             print(f"    [WARN] Unknown playing direction for match={match_id} "
                   f"team={team} half={half} — zone NOT normalised for this run.")
 
-    zone_start = assign_zone(x_start, y_start, direction=direction)
-    zone_end   = assign_zone(x_end,   y_end,   direction=direction)
+    zone_x_start, zone_y_start = assign_zone(x_start, y_start, direction=direction)
+    zone_x_mid, zone_y_mid     = assign_zone(x_mid, y_mid, direction=direction)
+    zone_x_end, zone_y_end     = assign_zone(x_end, y_end, direction=direction)
+    zone_start = f"{zone_x_start}{zone_y_start}" if isinstance(zone_x_start, str) else zone_x_start
+    zone_mid   = f"{zone_x_mid}{zone_y_mid}"     if isinstance(zone_x_mid, str) else zone_x_mid
+    zone_end   = f"{zone_x_end}{zone_y_end}"     if isinstance(zone_x_end, str) else zone_x_end
 
     return {
         "length_m":    round(length_m, 2),
@@ -644,7 +657,14 @@ def extract_run_indicators(start_frame: int, end_frame: int,
         "y_mid":       round(y_mid, 2),
         "y_end":       round(y_end, 2),
         "zone_start":  zone_start,
+        "third_start": zone_x_start,
+        "lane_start": zone_y_start,
+        "zone_mid":    zone_mid,
+        "third_mid":   zone_x_mid,
+        "lane_mid":    zone_y_mid,
         "zone_end":    zone_end,
+        "third_end": zone_x_end,
+        "lane_end": zone_y_end,
     }
 
 
@@ -813,6 +833,8 @@ def flag_shot_within_window(elapsed_s: float, half: str, run_team: str,
 # km/h; the enrichment pipeline expects m/s, hence the (/3.6) conversion
 # applied in _auto_row_to_indicators().
 _AUTO_COL_MAP = {
+    "auto_start_frame":       "start_frame",
+    "auto_end_frame":         "end_frame",
     "length_m":            "distance_m",
     "duration_s":          "duration_s",
     "mean_vel_ms":         "avg_velocity_kmh",   # /3.6
@@ -827,6 +849,13 @@ _AUTO_COL_MAP = {
     "x_mid":               "x_mid",
     "y_mid":               "y_mid",
     "zone_start":          "zone_start",
+    "zone_mid":            "zone_mid",
+    "third_start":         "third_start",
+    "third_mid":           "third_mid",
+    "third_end":           "third_end",
+    "lane_start":           "lane_start",
+    "lane_mid":             "lane_mid",
+    "lane_end":             "lane_end",
     "zone_end":            "zone_end",
 }
 # Columns whose source value is in km/h and must be divided by 3.6
@@ -991,10 +1020,15 @@ def process_annotation_file(annot_path: str,
         except (TypeError, ValueError):
             return np.nan
 
-    INDICATOR_COLS = ["length_m", "duration_s", "mean_vel_ms", "peak_vel_ms",
+    INDICATOR_COLS = ["auto_start_frame", "auto_end_frame",
+                    "length_m", "duration_s", "mean_vel_ms", "peak_vel_ms",
                       "pre_run_mean_vel_ms", "pre_run_peak_vel_ms", "pre_run_window_s",
-                      "x_start", "y_start", "x_end", "y_end",
-                      "x_mid", "y_mid", "zone_start", "zone_end"]
+                      "x_start", "y_start", 
+                      "x_end", "y_end",
+                      "x_mid", "y_mid", 
+                      "zone_start","third_start", "lane_start",
+                      "zone_mid", "third_mid", "lane_mid",
+                      "zone_end", "third_end", "lane_end"]
 
     enriched_rows = []
     n_reused_from_auto = 0
@@ -1032,21 +1066,40 @@ def process_annotation_file(annot_path: str,
         # already has all these indicators computed (Discretisation_optimised2_1.py)
         # → reuse them directly, without reloading the XML positions.
         indicators = None
+        duration_source = None
         if use_reuse_auto_metrics and auto_matched_row is not None:
             indicators = _auto_row_to_indicators(auto_matched_row, INDICATOR_COLS)
             if indicators is not None and _indicators_complete(indicators, INDICATOR_COLS):
                 n_reused_from_auto += 1
+                duration_source = "reused_from_auto_csv"
             else:
                 indicators = None   # missing/NaN columns → will recompute
 
         if indicators is None:
-            if person_id is None or sf_val is None or ef_val is None:
+            # Prefer the frame range of the matched automated segment (the
+            # actual detected movement) when one exists, even if we ended up
+            # here because its indicators were missing/incomplete in
+            # df_auto. Only fall back to the annotation's own frames when
+            # there is truly no automated match — in that case duration_s
+            # (and the other indicators) will legitimately coincide with
+            # the annotation window, since it's the only one available.
+            if auto_matched_row is not None:
+                recompute_sf = _safe_int(auto_matched_row["start_frame"])
+                recompute_ef = _safe_int(auto_matched_row["end_frame"])
+                frame_source = "auto_segment"
+            else:
+                recompute_sf = sf_val
+                recompute_ef = ef_val
+                frame_source = "annotation"
+
+            if person_id is None or recompute_sf is None or recompute_ef is None:
                 indicators = {k: np.nan for k in INDICATOR_COLS}
+                duration_source = "missing"
             else:
                 xy_dict, pid_to_xid = _get_position_data()
                 indicators = extract_run_indicators(
-                    start_frame  = sf_val,
-                    end_frame    = ef_val,
+                    start_frame  = recompute_sf,
+                    end_frame    = recompute_ef,
                     half         = half,
                     person_id    = person_id,
                     xy_dict      = xy_dict,
@@ -1057,8 +1110,11 @@ def process_annotation_file(annot_path: str,
                 )
                 if indicators is None:
                     print(f"    [WARN] No position data for segment {row['segment_id']} "
-                          f"(PersonId={person_id}, {half})")
+                          f"(PersonId={person_id}, {half}, frames from {frame_source})")
                     indicators = {k: np.nan for k in INDICATOR_COLS}
+                    duration_source = "missing"
+                else:
+                    duration_source = f"recomputed_from_{frame_source}"
 
         # ── 6d. Designated position from matchinfo ────────────────────────
         if person_id is not None:
@@ -1120,13 +1176,18 @@ def process_annotation_file(annot_path: str,
             "end_frame":             ef_val,
             "start_time_s":          _safe_float(row["start_time_s"]),
             "end_time_s":            _safe_float(row["end_time_s"]),
-            "duration_annot_s":      _safe_float(row.get("duration_s")),
+            "duration_annot_s":      (
+                _safe_float(row.get("duration_s"))
+                if pd.notna(row.get("duration_s"))
+                else _safe_float(row["end_time_s"] - row["start_time_s"])
+            ),
 
             # Outcome (if present)
             "outcome":               row.get("outcome", np.nan),
 
             # Kinematic indicators (from position data)
             **indicators,
+            "duration_source":       duration_source,  # reused_from_auto_csv / recomputed_from_auto_segment / recomputed_from_annotation / missing
 
             # Context
             "scoreline_at_run_start": scoreline,

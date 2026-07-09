@@ -156,16 +156,25 @@ def assign_zone(x, y, direction=None, target=ZONE_TARGET_DIRECTION,
     if direction is not None and direction == target:
         x = -x
         y = -y
-
-    if x < third_boundaries_x[0]:
-        third = 'D'
-    elif x <= third_boundaries_x[1]:
-        third = 'M'
+    # Horizontal third
+    if x < THIRD_BOUNDARIES_X[0]:
+        third = "D"
+    elif x <= THIRD_BOUNDARIES_X[1]:
+        third = "M"
     else:
-        third = 'A'
-
-    channel = int(np.searchsorted(channel_boundaries_y, y)) + 1  # 1-5
-    return f"{third}{channel}"
+        third = "A"
+    # Vertical channel (1 = most negative y)
+    if y < CHANNEL_BOUNDARIES_Y[0]:
+        channel = "R"
+    elif y < CHANNEL_BOUNDARIES_Y[1]:
+        channel = "HR"
+    elif y < CHANNEL_BOUNDARIES_Y[2]:
+        channel = "C"
+    elif y < CHANNEL_BOUNDARIES_Y[3]:
+        channel = "HL"
+    else:
+        channel = "L"
+    return third, channel
 
 
 # ============================================================================
@@ -616,12 +625,18 @@ def summarize_movements_to_dataframe(movements_dict, teamsheet, framerate=25):
 # ============================================================================
 
 def _build_time_anchors(path_events: str, path_info: str,
-                        framerate: int = 25) -> dict:
+                        framerate: int = 25,
+                        info_root=None, ev_root=None) -> dict:
     """
     Parse events + matchinfo XML once.
     Returns kickoff_utc, second_half_start_utc, kickoff_frames.
+
+    If `info_root` / `ev_root` (already-parsed ElementTree roots) are
+    supplied, the corresponding XML file is NOT re-parsed from disk —
+    lets callers share a single parse of each file across the pipeline.
     """
-    info_root   = ET.parse(path_info).getroot()
+    if info_root is None:
+        info_root = ET.parse(path_info).getroot()
     kickoff_str = info_root.find('.//General').attrib['KickoffTime']
     kickoff_utc = pd.Timestamp(kickoff_str).tz_convert('UTC')
 
@@ -632,7 +647,8 @@ def _build_time_anchors(path_events: str, path_info: str,
     else:
         h1_end_utc = kickoff_utc + pd.Timedelta(minutes=50)
 
-    ev_root = ET.parse(path_events).getroot()
+    if ev_root is None:
+        ev_root = ET.parse(path_events).getroot()
 
     second_half_start_utc = None
     kickoff_frames        = {'firstHalf': None, 'secondHalf': None}
@@ -834,12 +850,15 @@ def _parse_contacts_from_event_data(event_data,
 
 
 def _parse_contacts_xml_fallback(anchors: dict, framerate: int = 25,
-                                  path_events: str = None) -> pd.DataFrame:
+                                  path_events: str = None,
+                                  ev_root=None) -> pd.DataFrame:
     """
     XML fallback — uses pre-computed anchors (avoids re-parsing matchinfo).
+    If `ev_root` (already-parsed root) is supplied, path_events is not
+    re-read from disk.
     """
-    if path_events is None:
-        raise ValueError("path_events required for XML fallback")
+    if ev_root is None and path_events is None:
+        raise ValueError("path_events or ev_root required for XML fallback")
 
     kickoff_utc           = anchors['kickoff_utc']
     second_half_start_utc = anchors['second_half_start_utc']
@@ -850,7 +869,8 @@ def _parse_contacts_xml_fallback(anchors: dict, framerate: int = 25,
                      'SavedShot', 'BlockedShot', 'ShotWoodWork',
                      'ChanceWithoutShot'}
 
-    ev_root = ET.parse(path_events).getroot()
+    if ev_root is None:
+        ev_root = ET.parse(path_events).getroot()
     rows    = []
 
     def elapsed_to_frame_and_section(event_utc):
@@ -999,22 +1019,26 @@ def apply_possession_intervals_to_array(possession_array, intervals, teamsheets,
 
 def tag_ball_touches(df_movements, path_events, path_info,
                      framerate=25, anchors=None,
-                     teamsheets=None, event_data=None):
+                     teamsheets=None, event_data=None,
+                     ev_root=None, info_root=None):
     """
     Add a 'has_ball_touch' column to df_movements.
-    No XML re-parse when anchors, teamsheets and event_data are provided.
+    No XML re-parse when anchors, teamsheets and event_data are provided
+    (or when ev_root / info_root, already-parsed roots, are supplied).
     """
     TOUCH_BUFFER_FRAMES = 1 * framerate
     ACTIVE_TOUCH_ROLES  = {'ball_action', 'passer', 'shooter',
                            'duel_winner', 'duel_loser', 'fouled'}
 
     if anchors is None:
-        anchors = _build_time_anchors(path_events, path_info, framerate)
+        anchors = _build_time_anchors(path_events, path_info, framerate,
+                                      info_root=info_root, ev_root=ev_root)
 
     contacts = _parse_contacts_from_event_data(event_data, anchors, framerate=framerate)
     if contacts.empty:
         print("  [contacts] EventData empty — falling back to XML.")
-        contacts = _parse_contacts_xml_fallback(anchors, framerate, path_events=path_events)
+        contacts = _parse_contacts_xml_fallback(anchors, framerate,
+                                                path_events=path_events, ev_root=ev_root)
 
     if contacts.empty:
         print("[WARN] No ball contact events — 'has_ball_touch' set to False.")
@@ -1025,7 +1049,8 @@ def tag_ball_touches(df_movements, path_events, path_info,
     if teamsheets is not None:
         shortname_to_pid = _build_shortname_map_from_teamsheets(teamsheets)
     else:
-        info_root = ET.parse(path_info).getroot()
+        if info_root is None:
+            info_root = ET.parse(path_info).getroot()
         shortname_to_pid = {
             p.attrib['Shortname']: p.attrib['PersonId']
             for p in info_root.findall('.//Player')
@@ -1096,18 +1121,22 @@ def tag_ball_touches(df_movements, path_events, path_info,
 # ============================================================================
 
 def build_setpiece_blackout_frames(path_events, path_info,
-                                   framerate=25, anchors=None):
+                                   framerate=25, anchors=None,
+                                   ev_root=None):
     """
     Return blackout intervals per half as a sorted np.ndarray (N, 2),
     compatible with np.searchsorted.
+    If `ev_root` (already-parsed root) is supplied, path_events is not
+    re-read from disk.
     """
     if anchors is None:
-        anchors = _build_time_anchors(path_events, path_info, framerate)
+        anchors = _build_time_anchors(path_events, path_info, framerate, ev_root=ev_root)
 
     kickoff_utc           = anchors['kickoff_utc']
     second_half_start_utc = anchors['second_half_start_utc']
 
-    ev_root   = ET.parse(path_events).getroot()
+    if ev_root is None:
+        ev_root = ET.parse(path_events).getroot()
     intervals = {'firstHalf': [], 'secondHalf': []}
     n_windows = 0
 
@@ -1211,9 +1240,12 @@ def _apply_blackout_mask(df_movements: pd.DataFrame,
 # Goals, shots, scoreline and shot-follow-up flag
 # ============================================================================
 
-def parse_goals_and_shots(path_events, path_info, anchors, framerate=25):
+def parse_goals_and_shots(path_events, path_info, anchors, framerate=25,
+                          info_root=None, ev_root=None):
     """
     Parse the events XML for goals and shots.
+    If `info_root` / `ev_root` (already-parsed roots) are supplied, the
+    corresponding XML file is not re-read from disk.
 
     Elapsed times are expressed in seconds SINCE THE KICKOFF OF THE
     RESPECTIVE HALF (0 at kickoff of either half) — the same "per_half"
@@ -1234,7 +1266,8 @@ def parse_goals_and_shots(path_events, path_info, anchors, framerate=25):
     kickoff_utc            = anchors['kickoff_utc']
     second_half_start_utc  = anchors['second_half_start_utc']
 
-    info_root = ET.parse(path_info).getroot()
+    if info_root is None:
+        info_root = ET.parse(path_info).getroot()
     home_team_id = away_team_id = None
     for el in info_root.iter():
         role = el.get('Role', '')
@@ -1249,7 +1282,8 @@ def parse_goals_and_shots(path_events, path_info, anchors, framerate=25):
     SHOT_TAGS = {'ShotAtGoal', 'ShotOnTarget', 'ShotOffTarget',
                  'SavedShot', 'ShotWide', 'ShotHigh', 'BlockedShot'}
 
-    ev_root = ET.parse(path_events).getroot()
+    if ev_root is None:
+        ev_root = ET.parse(path_events).getroot()
 
     goal_rows, shot_rows = [], []
     home_score = away_score = 0
@@ -1455,9 +1489,20 @@ def process_match(
 
     # ------------------------------------------------------------------
     # 2. Time anchors — computed only once
+    #
+    # events.xml and matchinformation.xml are each parsed with ET.parse()
+    # EXACTLY ONCE here (info_root / ev_root). Every downstream function
+    # that used to re-parse these files on its own (_build_time_anchors,
+    # build_setpiece_blackout_frames, parse_goals_and_shots,
+    # tag_ball_touches, the contacts XML fallback) now accepts the
+    # already-parsed root and skips its own ET.parse() call.
     # ------------------------------------------------------------------
     print("Computing time anchors…")
-    anchors               = _build_time_anchors(path_events, path_info, framerate)
+    info_root = ET.parse(path_info).getroot()
+    ev_root   = ET.parse(path_events).getroot()
+
+    anchors               = _build_time_anchors(path_events, path_info, framerate,
+                                                 info_root=info_root, ev_root=ev_root)
     second_half_start_utc = anchors['second_half_start_utc']  # noqa: F841
     h1_kickoff            = anchors['kickoff_frames']['firstHalf']
     h2_kickoff            = anchors['kickoff_frames']['secondHalf']
@@ -1486,7 +1531,8 @@ def process_match(
     contacts = _parse_contacts_from_event_data(_events, anchors, framerate=framerate)
     if contacts.empty:
         print("  [contacts] EventData empty — falling back to XML.")
-        contacts = _parse_contacts_xml_fallback(anchors, framerate, path_events=path_events)
+        contacts = _parse_contacts_xml_fallback(anchors, framerate,
+                                                path_events=path_events, ev_root=ev_root)
 
     possession_intervals = build_possession_intervals(
         contacts, framerate=framerate, recipient_delay_s=RECIPIENT_DELAY_S)
@@ -1502,13 +1548,23 @@ def process_match(
     }
 
     # ------------------------------------------------------------------
-    # 4. Filtered velocities
+    # 4. Filtered positions + velocities
+    #
+    # butterworth_lowpass() is run EXACTLY ONCE per (half, team) here and
+    # the filtered XY object is kept in `xy_filtered_dict`. It used to be
+    # re-run identically in step 6 (movement extraction) and step 7
+    # (total distance) — same input, same Wn/order — tripling the cost of
+    # the (expensive) filtfilt pass over the whole match for no benefit.
+    # Both steps below now reuse `xy_filtered_dict` instead of refiltering.
     # ------------------------------------------------------------------
+    xy_filtered_dict       = {half: {} for half in ['firstHalf', 'secondHalf']}
     velocity_filtered_dict = {half: {} for half in ['firstHalf', 'secondHalf']}
     for half, teams in xy_all.items():
         for team, xy_data in teams.items():
             xy_f = butterworth_lowpass(xy_data, remove_short_seqs=True,
                                        Wn=butterworth_Wn, order=butterworth_order)
+            xy_filtered_dict[half][team] = xy_f
+
             vm_f = VelocityModel()
             vm_f.fit(xy_f)
             velocity_filtered_dict[half][team] = vm_f.velocity().property
@@ -1579,10 +1635,7 @@ def process_match(
         for half in ['firstHalf', 'secondHalf']:
             teamsheets[team].add_xIDs()
 
-            xy_f = butterworth_lowpass(
-                xy[half][team], remove_short_seqs=True,
-                Wn=butterworth_Wn, order=butterworth_order,
-            ).xy
+            xy_f = xy_filtered_dict[half][team].xy
 
             movements_dict = extract_discrete_movements_all_players(
                 velocity_filtered_dict[half][team],
@@ -1625,10 +1678,8 @@ def process_match(
     # 7. Total distance per player
     # ------------------------------------------------------------------
     ls_dfs_distance = []
-    for half, teams in xy_all.items():
-        for team, xy_data in teams.items():
-            xy_f = butterworth_lowpass(xy_data, remove_short_seqs=True,
-                                       Wn=butterworth_Wn, order=butterworth_order)
+    for half, teams in xy_filtered_dict.items():
+        for team, xy_f in teams.items():
             dm = DistanceModel()
             dm.fit(xy_f)
             df_players = teamsheets[team].teamsheet.copy()
@@ -1679,18 +1730,29 @@ def process_match(
     # so zone assignment and direction metrics are always consistent with
     # each other. See assign_zone() for the full methodology.
     # ------------------------------------------------------------------
-    df_movements["zone_start"] = [
-        assign_zone(x, y, direction=d)
-        for x, y, d in zip(df_movements["x_start"], df_movements["y_start"], player_direction)
+    
+    tuples_start = [
+    assign_zone(x, y, direction=d)
+    for x, y, d in zip(df_movements["x_start"], df_movements["y_start"], player_direction)
     ]
-    df_movements["zone_mid"] = [
+
+    df_movements["third_start"], df_movements["lane_start"] = zip(*tuples_start)
+    df_movements["zone_start"] = [f"{x}{y}" if isinstance(x, str) else x for x, y in tuples_start]
+
+    tuples_mid = [
         assign_zone(x, y, direction=d)
         for x, y, d in zip(df_movements["x_mid"], df_movements["y_mid"], player_direction)
     ]
-    df_movements["zone_end"] = [
+    df_movements["third_mid"], df_movements["lane_mid"] = zip(*tuples_mid)
+    df_movements["zone_mid"] = [f"{x}{y}" if isinstance(x, str) else x for x, y in tuples_mid]
+
+    tuples_end = [
         assign_zone(x, y, direction=d)
         for x, y, d in zip(df_movements["x_end"], df_movements["y_end"], player_direction)
-    ]
+    ]   
+    df_movements["third_end"], df_movements["lane_end"] = zip(*tuples_end)
+    df_movements["zone_end"] = [f"{x}{y}" if isinstance(x, str) else x for x, y in tuples_end]
+    
 
     # ------------------------------------------------------------------
     # 8c. Scoreline, goal indicator, and shot-within-window flag
@@ -1699,7 +1761,8 @@ def process_match(
     # pipeline exactly (kickoff detection, blackout windows, etc.).
     # ------------------------------------------------------------------
     df_goals, df_shots = parse_goals_and_shots(
-        path_events, path_info, anchors, framerate=framerate)
+        path_events, path_info, anchors, framerate=framerate,
+        info_root=info_root, ev_root=ev_root)
 
     # Elapsed seconds SINCE THE KICKOFF OF THE RESPECTIVE HALF (per_half=True),
     # matching the convention used when parsing goals/shots above.
@@ -1730,6 +1793,8 @@ def process_match(
         anchors=anchors,
         teamsheets=teamsheets,
         event_data=_events,
+        ev_root=ev_root,
+        info_root=info_root,
     )
 
     # ------------------------------------------------------------------
@@ -1738,6 +1803,7 @@ def process_match(
     blackout_intervals = build_setpiece_blackout_frames(
         path_events, path_info,
         framerate=framerate, anchors=anchors,
+        ev_root=ev_root,
     )
 
     mask_blackout = _apply_blackout_mask(df_movements, blackout_intervals)
@@ -1772,9 +1838,9 @@ def process_match(
         # Pre-run window (see _compute_pre_run_window)
         'pre_run_mean_vel_kmh', 'pre_run_peak_vel_kmh', 'pre_run_window_s',
         # Spatial (see summarize_movements_to_dataframe / assign_zone)
-        'x_start', 'y_start', 'zone_start',
-        'x_mid', 'y_mid', 'zone_mid',
-        'x_end', 'y_end', 'zone_end',
+        'x_start', 'y_start', 'zone_start', 'third_start', 'lane_start',
+        'x_mid', 'y_mid', 'zone_mid', 'third_mid', 'lane_mid',
+        'x_end', 'y_end', 'zone_end', 'third_end', 'lane_end',
         'direction', 'attack_sign',
         # Possession / ball touches
         'possession', 'possession_ratio', 'possession_contested', 'has_ball_touch',
