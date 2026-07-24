@@ -29,7 +29,7 @@ VIDEO_DIR = _env_path("RIB_VIDEO_DIR", "/home/max/drive/data/videos_openData2223
 
 # --- Playing-direction JSON --------------------------------------------------
 # `dict_direction[match_id]['Home'][half]` -> 'left_to_right' | 'right_to_left'
-DIRECTION_JSON = _env_path("RIB_DIRECTION_JSON", _repo_path("direction_idsse_videos.json"))
+DIRECTION_JSON = _env_path("RIB_DIRECTION_JSON", _repo_path("direction_idsse.json"))
 
 # --- Video-sync offsets JSON --------------------------------------------------
 # `{match_id: {'firstHalf': 'hh:mm:ss', 'secondHalf': 'hh:mm:ss'}}` -- the

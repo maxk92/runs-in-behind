@@ -7,8 +7,9 @@ Football/soccer analytics research project extracting and analyzing **deep runs*
 | Folder | Contents |
 |---|---|
 | `common/` | Shared config/filter/IoU/timecode/annotation-loading utilities used across the pipeline |
-| `segmentation/` | Task 1: discretize position data into candidate movements, filter to run-in-behind candidates, generate video QA clips |
+| `segmentation/` | Task 1: discretize position data into candidate movements, filter to run-in-behind candidates |
 | `manual_annotations/` | Task 2: inter-annotator agreement (2a), automated-vs-manual evaluation (2b), merge + enrichment (2c) |
+| `video-processing/` | Downstream of segmentation, not part of it: cuts video clips for each detected run |
 | `pitch-control/` | Independent contribution: a from-scratch pitch-control model, not yet wired into filtering |
 | `movement-classification/` | Independent contribution: run-shape classifier (straight/diagonal/curvilinear), not yet wired into filtering |
 | `match-context/` | Independent contribution: possession-phase/attack-type/player-role/zone context features, exploratory |
