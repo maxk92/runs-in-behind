@@ -2,7 +2,7 @@
 Discretisation pipeline
 =======================
 Optimised version — pure NumPy possession smoothing, vectorised valley
-filtering, merge-based ball-touch tagging, NumPy interval blackout filter.
+filtering, NumPy interval blackout filter.
 """
 
 import os
@@ -715,26 +715,6 @@ def _build_time_anchors(path_events: str, path_info: str,
 
 
 # ============================================================================
-# Shortname → PersonId map — vectorised via set_index, no iterrows
-# ============================================================================
-
-def _build_shortname_map_from_teamsheets(teamsheets: dict) -> dict:
-    """
-    Build {Shortname → PersonId} from floodlight teamsheets.
-    No XML parsing, no iterrows.
-    """
-    mapping = {}
-    for team_ts in teamsheets.values():
-        ts      = team_ts.teamsheet
-        col_pid = next((c for c in ['player_id', 'pID'] if c in ts.columns), None)
-        if col_pid is None or 'player' not in ts.columns:
-            continue
-        valid = ts[['player', col_pid]].dropna()
-        mapping.update(valid.set_index('player')[col_pid].to_dict())
-    return mapping
-
-
-# ============================================================================
 # Parse contacts from EventData
 # UTC conversion is batched with pd.to_datetime; game_section and frame are
 # assigned with np.where / Series.map (no iterrows).
@@ -1011,106 +991,6 @@ def apply_possession_intervals_to_array(possession_array, intervals, teamsheets,
         if team is not None:
             new_poss[start:end] = team
     return new_poss
-
-
-# ============================================================================
-# tag_ball_touches — merge-based, O(n log n) instead of row-by-row apply
-# ============================================================================
-
-def tag_ball_touches(df_movements, path_events, path_info,
-                     framerate=25, anchors=None,
-                     teamsheets=None, event_data=None,
-                     ev_root=None, info_root=None):
-    """
-    Add a 'has_ball_touch' column to df_movements.
-    No XML re-parse when anchors, teamsheets and event_data are provided
-    (or when ev_root / info_root, already-parsed roots, are supplied).
-    """
-    TOUCH_BUFFER_FRAMES = 1 * framerate
-    ACTIVE_TOUCH_ROLES  = {'ball_action', 'passer', 'shooter',
-                           'duel_winner', 'duel_loser', 'fouled'}
-
-    if anchors is None:
-        anchors = _build_time_anchors(path_events, path_info, framerate,
-                                      info_root=info_root, ev_root=ev_root)
-
-    contacts = _parse_contacts_from_event_data(event_data, anchors, framerate=framerate)
-    if contacts.empty:
-        print("  [contacts] EventData empty — falling back to XML.")
-        contacts = _parse_contacts_xml_fallback(anchors, framerate,
-                                                path_events=path_events, ev_root=ev_root)
-
-    if contacts.empty:
-        print("[WARN] No ball contact events — 'has_ball_touch' set to False.")
-        df_movements['has_ball_touch'] = False
-        return df_movements
-
-    # Player name → PersonId mapping
-    if teamsheets is not None:
-        shortname_to_pid = _build_shortname_map_from_teamsheets(teamsheets)
-    else:
-        if info_root is None:
-            info_root = ET.parse(path_info).getroot()
-        shortname_to_pid = {
-            p.attrib['Shortname']: p.attrib['PersonId']
-            for p in info_root.findall('.//Player')
-            if 'Shortname' in p.attrib and 'PersonId' in p.attrib
-        }
-
-    unknown = set(df_movements['player'].unique()) - set(shortname_to_pid.keys())
-    if unknown:
-        print(f"[WARN] {len(unknown)} player name(s) not found: {unknown}")
-
-    # Vectorised merge approach — join movements with contact events, filter by time window.
-    active_contacts = (
-        contacts[contacts['role'].isin(ACTIVE_TOUCH_ROLES)]
-        [['person_id', 'game_section', 'abs_frame']]
-        .rename(columns={'person_id': '_pid', 'game_section': 'half',
-                         'abs_frame': 'touch_frame'})
-    )
-
-    df_m = df_movements.copy()
-    df_m['_pid']       = df_m['player'].map(shortname_to_pid)
-    df_m['_win_start'] = df_m['start_frame'].astype(int) + TOUCH_BUFFER_FRAMES
-    df_m['_win_end']   = df_m['end_frame'].astype(int)   - TOUCH_BUFFER_FRAMES
-    df_m['_idx']       = np.arange(len(df_m))
-
-    # Only merge rows with a known pid and a valid window
-    valid_m = df_m.dropna(subset=['_pid'])
-    valid_m = valid_m[valid_m['_win_end'] > valid_m['_win_start']]
-
-    if valid_m.empty:
-        df_movements['has_ball_touch'] = False
-        return df_movements
-
-    merged = valid_m[['_pid', 'half', '_win_start', '_win_end', '_idx']].merge(
-        active_contacts, on=['_pid', 'half'], how='left'
-    )
-
-    # Keep only contacts within [win_start, win_end]
-    in_window = (
-        merged['touch_frame'].notna()
-        & (merged['touch_frame'] >= merged['_win_start'])
-        & (merged['touch_frame'] <= merged['_win_end'])
-    )
-    touched_indices = merged.loc[in_window, '_idx'].unique()
-
-    touch_mask = np.zeros(len(df_movements), dtype=bool)
-    if len(touched_indices) > 0:
-        touch_mask[touched_indices] = True
-    df_movements['has_ball_touch'] = touch_mask
-
-    n_touch = int(touch_mask.sum())
-    n_total = len(df_movements)
-    by_role_str = contacts[contacts['role'].isin(ACTIVE_TOUCH_ROLES)]['role'].value_counts().to_dict()
-    print(f"[OK] ball touches tagged — {n_touch}/{n_total} movements.")
-    print(f"     active-touch roles : {by_role_str}")
-    print(f"     touch buffer (each side) : {TOUCH_BUFFER_FRAMES/framerate:.1f}s")
-
-    # Drop temporary columns
-    df_movements.drop(columns=['_pid', '_win_start', '_win_end', '_idx'],
-                      errors='ignore', inplace=True)
-    return df_movements
 
 
 # ============================================================================
@@ -1411,8 +1291,7 @@ def flag_shot_within_window_vectorized(half_arr, location_arr, end_elapsed_s_arr
 
     Methodology
     -----------
-    Merge-based approach (same style as `tag_ball_touches`), avoiding a
-    per-row Python loop:
+    Merge-based approach (avoiding a per-row Python loop):
       1. Build a small per-movement frame with (half, team, end_elapsed_s).
       2. Left-merge it against all shots on (half, team) — this creates
          one row per (movement, candidate shot) pair sharing the same half
@@ -1494,7 +1373,7 @@ def process_match(
     # EXACTLY ONCE here (info_root / ev_root). Every downstream function
     # that used to re-parse these files on its own (_build_time_anchors,
     # build_setpiece_blackout_frames, parse_goals_and_shots,
-    # tag_ball_touches, the contacts XML fallback) now accepts the
+    # the contacts XML fallback) now accepts the
     # already-parsed root and skips its own ET.parse() call.
     # ------------------------------------------------------------------
     print("Computing time anchors…")
@@ -1785,20 +1664,7 @@ def process_match(
         end_elapsed_s, df_shots, shot_window_s)
 
     # ------------------------------------------------------------------
-    # 9. Tag ball touches (no re-parse)
-    # ------------------------------------------------------------------
-    df_movements = tag_ball_touches(
-        df_movements, path_events, path_info,
-        framerate=framerate,
-        anchors=anchors,
-        teamsheets=teamsheets,
-        event_data=_events,
-        ev_root=ev_root,
-        info_root=info_root,
-    )
-
-    # ------------------------------------------------------------------
-    # 10. Setpiece blackout exclusion — vectorised via searchsorted
+    # 9. Setpiece blackout exclusion — vectorised via searchsorted
     # ------------------------------------------------------------------
     blackout_intervals = build_setpiece_blackout_frames(
         path_events, path_info,
@@ -1819,7 +1685,7 @@ def process_match(
             print(f"    earliest surviving movement in {half}: frame {min_frame} ({min_tc})")
 
     # ------------------------------------------------------------------
-    # 11. Final column ordering
+    # 10. Final column ordering
     # Group columns by theme (identifiers -> timing -> kinematics ->
     # pre-run window -> spatial/zones -> possession -> match context)
     # so the exported CSV reads logically from left to right.
@@ -1842,8 +1708,8 @@ def process_match(
         'x_mid', 'y_mid', 'zone_mid', 'third_mid', 'lane_mid',
         'x_end', 'y_end', 'zone_end', 'third_end', 'lane_end',
         'direction', 'attack_sign',
-        # Possession / ball touches
-        'possession', 'possession_ratio', 'possession_contested', 'has_ball_touch',
+        # Possession
+        'possession', 'possession_ratio', 'possession_contested',
         # Match context
         'scoreline_at_run_start', 'goal_indicator', shot_col,
     ]

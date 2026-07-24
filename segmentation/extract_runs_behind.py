@@ -83,11 +83,6 @@ print(f"\nTotal movements across all matches: {len(df_all_movements)}")
 print("\nSpeed category distribution:")
 print(df_all_movements['speed_category'].value_counts())
 
-# Count movements with ball touch
-n_with_ball = df_all_movements['has_ball_touch'].sum()
-n_total = len(df_all_movements)
-print(f"\nMovements with ball possession: {n_with_ball}/{n_total} ({n_with_ball/n_total*100:.1f}%)")
-
 # ── Save global files ─────────────────────────────────────────────────────────
 
 df_all_movements.to_csv(os.path.join(output_dir, 'all_movements.csv'), index=False)
