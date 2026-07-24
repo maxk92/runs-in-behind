@@ -2,14 +2,17 @@ import json
 import os
 import pandas as pd
 import numpy as np
-from Discretisation_optimised2_1 import process_match
+from Discretisation_optimised2_1 import process_match, SETPIECE_OFFSETS
+
+from common import config
+from common.filters import is_run_in_behind
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-DATA_DIR  = r'C:\Users\arnau\Sciebo\SharedDrive_Arnaud_Franziska\data\open_data2223'
-JSON_PATH = r'C:\Users\arnau\Sciebo\SharedDrive_Arnaud_Franziska\data\direction_idsse_video.json'
+DATA_DIR  = config.DATA_DIR
+JSON_PATH = config.DIRECTION_JSON
 
-ls_match_ids = ['J03WMX', 'J03WN1', 'J03WPY', 'J03WOH', 'J03WQQ', 'J03WOY', 'J03WR9']
+ls_match_ids = config.DEFAULT_MATCH_IDS
 
 # ── Load direction JSON once (shared across all matches) ──────────────────────
 
@@ -22,18 +25,15 @@ all_movements    = []
 all_distances    = []
 all_trajectories = {}
 
-output_dir = r'C:\Users\arnau\Documents\projetde\runs-in-behind\outputs_loop_with_offsets'
+output_dir = config.AUTO_OUTPUT_DIR
 os.makedirs(output_dir, exist_ok=True)
 
 print("=" * 80)
 print("PROCESSING WITH SETPIECE OFFSETS")
 print("=" * 80)
 print("Movements whose START or END falls within these windows after a setpiece are EXCLUDED:")
-print("ThrowIn:      first 2 seconds")
-print("FreeKick:     first 3 seconds")
-print("GoalKick:     first 4 seconds")
-print("KickOff:      first 6 seconds")
-print("CornerKick:   first 3 seconds")
+for tag, offset_s in SETPIECE_OFFSETS.items():
+    print(f"{tag + ':':<14}first {offset_s:g} seconds")
 print("(Movements that only cross a blackout window mid-course are kept.)")
 print("=" * 80)
 print()
@@ -56,14 +56,7 @@ for match_id in ls_match_ids:
         all_trajectories[match_id] = dict_traj
 
         # ── Per-match filter and save ─────────────────────────────────────────
-        df_runs = df_mov[
-        (
-            (df_mov['possession'] == df_mov['location']) |
-            df_mov['possession_contested']) &
-            (df_mov['speed_category'].isin(['running', 'sprinting'])) &
-            (df_mov['distance_m'] > 2.5) & # in the definition the thresold is 3 m, but we use 2.5 m to avoid computing error
-            (df_mov['direction'] > 0.3) 
-]
+        df_runs = df_mov[is_run_in_behind(df_mov)]
         df_runs.to_csv(
             os.path.join(output_dir, f'runs_behind_{match_id}.csv'), index=False
         )
