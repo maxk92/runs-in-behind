@@ -517,7 +517,7 @@ def _compute_covariance(vel         : np.ndarray,
 
     fixed_radius : when True (ball travelling above the speed threshold),
                    skip the distance-to-ball radius scaling and use
-                   MIN_RADIUS for every player.  This prevents a fast
+                   MAX_RADIUS for every player.  This prevents a fast
                    through-ball from artificially shrinking the influence
                    radius of the players it lobs over.
     """
@@ -540,7 +540,7 @@ def _player_influence(grid        : np.ndarray,
     Returns array of shape (N,) with values in [0, 1].
 
     fixed_radius : forwarded to _compute_covariance.  When True,
-                   the influence ellipse is built with MIN_RADIUS
+                   the influence ellipse is built with MAX_RADIUS
                    regardless of the player's distance to the ball.
     """
     mu   = _compute_mu(pos, vel)
@@ -569,7 +569,7 @@ def compute_pitch_control(grid        : np.ndarray,
         0  →  defending team fully controls this point
        0.5 →  contested
 
-    fixed_radius : when True (ball faster than threshold), use MIN_RADIUS
+    fixed_radius : when True (ball faster than threshold), use MAX_RADIUS
                    for all influence ellipses (see _compute_covariance).
     """
     sum_att = np.zeros(len(grid))
