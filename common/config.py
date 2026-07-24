@@ -24,8 +24,8 @@ def _repo_path(*parts: str) -> str:
 
 
 # --- Raw DFL data -----------------------------------------------------------
-DATA_DIR  = _env_path("RIB_DATA_DIR", "/home/max/drive/data/openData2223")
-VIDEO_DIR = _env_path("RIB_VIDEO_DIR", "/home/max/drive/data/videos_openData2223")
+DATA_DIR  = _env_path("RIB_DATA_DIR", "/home/max/drive/data/IDSSE")
+VIDEO_DIR = _env_path("RIB_VIDEO_DIR", "/home/max/drive/data/IDSSE/videos_by_half")
 
 # --- Playing-direction JSON --------------------------------------------------
 # `dict_direction[match_id]['Home'][half]` -> 'left_to_right' | 'right_to_left'

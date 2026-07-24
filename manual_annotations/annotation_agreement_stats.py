@@ -47,7 +47,7 @@ from common.annotations import discover_match_annotation_files
 # 0.  CONFIGURATION
 # ══════════════════════════════════════════════════════════════════
 DATA_DIR   = config.ANNOTATION_DIR
-MATCH_ID   = "DFL-MAT-J03WMX"
+MATCH_ID   = "DFL-MAT-J03WN1"
 TOLERANCE  = 0
 FPS        = 25                          # frames per second → used for timecode conversion
 OUTPUT_DIR = config.STATS_OUTPUT_DIR
