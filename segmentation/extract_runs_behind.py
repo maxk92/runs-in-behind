@@ -1,8 +1,11 @@
-import json
+import sys
 import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import json
 import pandas as pd
 import numpy as np
-from Discretisation_optimised2_1 import process_match, SETPIECE_OFFSETS
+from segmentation.discretisation import process_match, SETPIECE_OFFSETS
 
 from common import config
 from common.filters import is_run_in_behind

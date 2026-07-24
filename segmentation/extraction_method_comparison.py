@@ -1,18 +1,18 @@
 """
-compare_discretisation.py
-=========================
+extraction_method_comparison.py
+================================
 Visual comparison of the OLD vs NEW velocity segmentation (discretisation)
 approaches on DFL tracking data for a specific player and time window.
 
 OLD approach : simple valley detection only (old_code/extract_discrete_efforts.ipynb)
 NEW approach : valley detection + metabolic-power sub-segmentation
                + vectorised valley filtering
-               + setpiece blackout exclusion (Discretisation_optimised2_1.py)
+               + setpiece blackout exclusion (discretisation.py)
 
 Usage
 -----
 Adjust the CONFIG block below, then run:
-    python compare_discretisation.py
+    python extraction_method_comparison.py
 """
 
 # ============================================================================
@@ -20,6 +20,8 @@ Adjust the CONFIG block below, then run:
 # ============================================================================
 import os
 import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import json
 import xml.etree.ElementTree as ET
 
@@ -38,11 +40,9 @@ from floodlight.models.kinematics import VelocityModel
 from floodlight.transforms.filter import butterworth_lowpass
 
 # ============================================================================
-# Local — NEW pipeline module (must be importable from this script's location)
-# Adjust the path below if Discretisation_optimised2_1.py lives elsewhere.
+# Local — NEW pipeline module
 # ============================================================================
-# sys.path.insert(0, r"C:\path\to\your\pipeline")
-from Discretisation_optimised2_1 import (
+from segmentation.discretisation import (
     extract_movements_for_player   as new_extract_movements,
     split_segment_by_power,
     build_setpiece_blackout_frames,
