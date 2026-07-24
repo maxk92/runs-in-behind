@@ -1,6 +1,10 @@
 # venv
 .venv/
 
+# Python
+__pycache__/
+*.pyc
+
 # Claude
 .claude/
 CLAUDE.md
