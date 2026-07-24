@@ -6,11 +6,12 @@ Run this script to analyse a sequence of frames from a DFL match.
 """
 
 from pitch_control_tool import DFLDataProvider, PitchControlAnalyzer
+from common import config
 
 # ── paths ──────────────────────────────────────────────────────
-DATA_DIR       = r'C:\Users\arnau\Sciebo\SharedDrive_Arnaud_Franziska\data\open_data2223'
-OUTPUT_DIR     = r'C:\Users\arnau\Documents\projetde\runs-in-behind\output_tool'
-DIRECTION_JSON = r'C:\Users\arnau\Sciebo\SharedDrive_Arnaud_Franziska\data\direction_idsse_video.json'
+DATA_DIR       = config.DATA_DIR
+OUTPUT_DIR     = config.PITCH_CONTROL_OUTPUT_DIR
+DIRECTION_JSON = config.DIRECTION_JSON
 MATCH_ID       = 'DFL-MAT-J03WMX'    # change to any available match id
 
 # ── 1.  Instantiate the data provider ─────────────────────────
@@ -52,8 +53,8 @@ print(f'Available frames: {start} → {end}')
 #                          who are still running onto it, which would
 #                          artificially collapse their ellipses and drop PC.
 #                          When the ball travels above this threshold all
-#                          players use MIN_RADIUS (≈ 3 m) regardless of
-#                          their distance to the ball.
+#                          players use MAX_RADIUS (10 m, see pitch_control_tool.py)
+#                          regardless of their distance to the ball.
 #
 #                          The columns 'ball_speed_kmh' and 'radius_frozen'
 #                          (True/False) are added to frame_control.csv and
@@ -99,40 +100,24 @@ df = analyzer.analyze(
 print(df.head())
 
 
-provider2 = DFLDataProvider(DATA_DIR, 'DFL-MAT-J03WMX', DIRECTION_JSON)
-analyzer2 = PitchControlAnalyzer(provider2, OUTPUT_DIR, att_team='away')
-df2 = analyzer2.analyze(13259, 13374, ball_speed_threshold=35.0, target_player='E. Martel')
+# ── 6.  Further examples: a batch of away-team windows ────────
+# (start_frame, end_frame, target_player, note)
+AWAY_TEAM_EXAMPLES = [
+    (13259, 13374, 'E. Martel', None),
+    (19550, 19613, 'Kingsley Coman', None),
+    (59688, 59767, 'N. Mazraoui', None),
+    (71746, 71832, 'B. Schmitz', None),
+    (13906, 13960, 'D. Ljubicic', 'known false positive of the pitch-control heuristic'),
+    (25004, 25069, 'E. Martel', None),
+    (42855, 42932, 'T. Müller', None),
+    (52674, 52769, 'Serge Gnabry', None),
+    (41853, 41969, 'Kingsley Coman', None),
+]
 
-provider2 = DFLDataProvider(DATA_DIR, 'DFL-MAT-J03WMX', DIRECTION_JSON)
-analyzer2 = PitchControlAnalyzer(provider2, OUTPUT_DIR, att_team='away')
-df2 = analyzer2.analyze(19550, 19613, ball_speed_threshold=35.0, target_player='Kingsley Coman')
-
-provider2 = DFLDataProvider(DATA_DIR, 'DFL-MAT-J03WMX', DIRECTION_JSON)
-analyzer2 = PitchControlAnalyzer(provider2, OUTPUT_DIR, att_team='away')
-df2 = analyzer2.analyze(59688, 59767, ball_speed_threshold=35.0, target_player='N. Mazraoui')
-
-provider2 = DFLDataProvider(DATA_DIR, 'DFL-MAT-J03WMX', DIRECTION_JSON)
-analyzer2 = PitchControlAnalyzer(provider2, OUTPUT_DIR, att_team='away')
-df2 = analyzer2.analyze(71746, 71832, ball_speed_threshold=35.0, target_player='B. Schmitz')
-
-
-#false positive
-provider2 = DFLDataProvider(DATA_DIR, 'DFL-MAT-J03WMX', DIRECTION_JSON)
-analyzer2 = PitchControlAnalyzer(provider2, OUTPUT_DIR, att_team='away')
-df2 = analyzer2.analyze(13906, 13960, ball_speed_threshold=35.0, target_player='D. Ljubicic')
-
-provider2 = DFLDataProvider(DATA_DIR, 'DFL-MAT-J03WMX', DIRECTION_JSON)
-analyzer2 = PitchControlAnalyzer(provider2, OUTPUT_DIR, att_team='away')
-df2 = analyzer2.analyze(25004, 25069, ball_speed_threshold=35.0, target_player='E. Martel')
-
-provider2 = DFLDataProvider(DATA_DIR, 'DFL-MAT-J03WMX', DIRECTION_JSON)
-analyzer2 = PitchControlAnalyzer(provider2, OUTPUT_DIR, att_team='away')
-df2 = analyzer2.analyze(42855, 42932, ball_speed_threshold=35.0, target_player='T. Müller')
-
-provider2 = DFLDataProvider(DATA_DIR, 'DFL-MAT-J03WMX', DIRECTION_JSON)
-analyzer2 = PitchControlAnalyzer(provider2, OUTPUT_DIR, att_team='away')
-df2 = analyzer2.analyze(52674, 52769, ball_speed_threshold=35.0, target_player='Serge Gnabry')
-
-provider2 = DFLDataProvider(DATA_DIR, 'DFL-MAT-J03WMX', DIRECTION_JSON)
-analyzer2 = PitchControlAnalyzer(provider2, OUTPUT_DIR, att_team='away')
-df2 = analyzer2.analyze(41853, 41969, ball_speed_threshold=35.0, target_player='Kingsley Coman')
+for start_frame, end_frame, target_player, note in AWAY_TEAM_EXAMPLES:
+    if note:
+        print(f'[NOTE] {target_player} @ [{start_frame}, {end_frame}]: {note}')
+    provider2 = DFLDataProvider(DATA_DIR, MATCH_ID, DIRECTION_JSON)
+    analyzer2 = PitchControlAnalyzer(provider2, OUTPUT_DIR, att_team='away')
+    df2 = analyzer2.analyze(start_frame, end_frame,
+                            ball_speed_threshold=35.0, target_player=target_player)
