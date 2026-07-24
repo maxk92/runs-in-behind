@@ -21,7 +21,6 @@ Generated visualisations:
 """
 
 import os
-import glob
 import itertools
 import textwrap
 
@@ -36,14 +35,19 @@ import matplotlib.colors as mcolors
 from matplotlib.patches import FancyBboxPatch
 from matplotlib.gridspec import GridSpec
 
+from common import config
+from common.iou import temporal_iou as _shared_temporal_iou
+from common.timecodes import frames_to_timecode
+from common.annotations import discover_match_annotation_files
+
 # ══════════════════════════════════════════════════════════════════
 # 0.  CONFIGURATION
 # ══════════════════════════════════════════════════════════════════
-DATA_DIR   = r"C:\Users\arnau\Documents\projetde\runs-in-behind\annotation_app_output"
+DATA_DIR   = config.ANNOTATION_DIR
 MATCH_ID   = "DFL-MAT-J03WMX"
 TOLERANCE  = 0
 FPS        = 25                          # frames per second → used for timecode conversion
-OUTPUT_DIR = os.path.join(DATA_DIR, "results")
+OUTPUT_DIR = config.STATS_OUTPUT_DIR
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ── Presentation theme ─────────────────────────────────────────────
@@ -84,34 +88,26 @@ matplotlib.rcParams.update({
 # ══════════════════════════════════════════════════════════════════
 def frame_to_timecode(frame: int, fps: float = FPS) -> str:
     """Convert a frame number to a MM:SS.mmm timecode string."""
-    total_seconds = frame / fps
-    minutes       = int(total_seconds // 60)
-    seconds       = total_seconds % 60
-    return f"{minutes:02d}:{seconds:06.3f}"
+    return frames_to_timecode(frame, fps=fps, fmt="ms")
 
 
 # ══════════════════════════════════════════════════════════════════
 # 1.  LOADING & CLEANING
 # ══════════════════════════════════════════════════════════════════
 def load_annotations(data_dir: str, match_id: str) -> dict:
-    pattern = os.path.join(data_dir, f"{match_id}_*.csv")
-    files   = glob.glob(pattern)
+    # match_id here includes the "DFL-MAT-" prefix (see MATCH_ID above);
+    # discover_match_annotation_files expects the bare match id, so strip it.
+    bare_match_id = match_id.replace("DFL-MAT-", "")
+    file_map = discover_match_annotation_files(data_dir, bare_match_id)
 
-    if not files:
+    if not file_map:
         raise FileNotFoundError(
-            f"No file found:\n  {pattern}\n"
+            f"No file found:\n  {os.path.join(data_dir, f'{match_id}_*.csv')}\n"
             "→ Check DATA_DIR in the CONFIGURATION section."
         )
 
     dfs = {}
-    for path in sorted(files):
-        basename = os.path.splitext(os.path.basename(path))[0]
-        parts    = basename.split("_", 2)
-        if len(parts) < 3:
-            print(f"  Ignored (unexpected name): {basename}")
-            continue
-
-        key = f"{parts[1]}_{parts[2]}"
+    for key, path in sorted(file_map.items()):
         df  = pd.read_csv(path)
         df["player_jid"] = (
             pd.to_numeric(df["player_jid"], errors="coerce")
@@ -132,9 +128,7 @@ def load_annotations(data_dir: str, match_id: str) -> dict:
 # 2.  ALGORITHME DE MATCHING
 # ══════════════════════════════════════════════════════════════════
 def _temporal_iou(s_a, e_a, s_b, e_b) -> float:
-    inter = max(0, min(e_a, e_b) - max(s_a, s_b))
-    union = max(e_a, e_b) - min(s_a, s_b)
-    return inter / union if union > 0 else 0.0
+    return _shared_temporal_iou(s_a, e_a, s_b, e_b)
 
 
 def match_segments(df_a: pd.DataFrame, df_b: pd.DataFrame,
