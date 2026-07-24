@@ -1190,6 +1190,15 @@ def process_annotation_file(annot_path: str,
         if shot_window_s is not None:
             out[f"shot_within_{int(shot_window_s)}s"] = shot_flag
 
+        # ── 6h. Passthrough: any other column present in the source annotation
+        # file (e.g. Outcome-Level-1, Outcome-Level-2, Timing, Reaction-Defense,
+        # or any future addition) that isn't already explicitly handled above.
+        # Keeps the enriched output lossless with respect to the manual
+        # annotations, without hardcoding a specific column list here.
+        for col in df_annot.columns:
+            if col not in out:
+                out[col] = row[col]
+
         enriched_rows.append(out)
 
     df_enriched = pd.DataFrame(enriched_rows)
