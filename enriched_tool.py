@@ -33,26 +33,32 @@ import floodlight.io.dfl as dfl
 from floodlight.models.kinematics import VelocityModel
 from floodlight.transforms.filter import butterworth_lowpass
 
+from common import config as _config
+from common.iou import temporal_iou as _shared_temporal_iou
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG  ← edit this block
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Root folder that contains all DFL open-data XML files
-DATA_DIR = r"C:\Users\arnau\Sciebo\SharedDrive_Arnaud_Franziska\data\open_data2223"
+DATA_DIR = _config.DATA_DIR
 
 # Folder that contains the annotation CSV(s)  (or a single file path)
-ANNOTATION_DIR = r"C:\Users\arnau\Documents\projetde\runs-in-behind\annotation"
+# Canonical folder -- also used by Extraction_Evaluation.py and
+# Stats_Manual_Annotation_App.py (previously a separate, differently-shaped
+# "annotation_app_output" folder).
+ANNOTATION_DIR = _config.ANNOTATION_DIR
 
 # Glob pattern inside ANNOTATION_DIR – adjust to pick specific files
 ANNOTATION_GLOB = "*.csv"          # e.g. "*_validated.csv"  or  "*_david.csv"
 
 # Folder where the loop script saved its per-match automated outputs
 # (the files named  runs_behind_{match_id}.csv)
-AUTO_OUTPUT_DIR = r"C:\Users\arnau\Documents\projetde\runs-in-behind\outputs_loop_with_offsets"
+AUTO_OUTPUT_DIR = _config.AUTO_OUTPUT_DIR
 
 # Output folder for the enriched CSVs produced by THIS script
-OUTPUT_DIR = r"C:\Users\arnau\Documents\projetde\runs-in-behind\outputs_enriched"
+OUTPUT_DIR = _config.ENRICHED_OUTPUT_DIR
 
 # How many seconds after a run must a shot happen to flag it?
 SHOT_WINDOW_S = 10          # set to None to skip shot-flag computation
@@ -88,7 +94,7 @@ FRAMERATE         = 25      # frames per second
 # Path to the JSON describing each team's playing direction per half.
 # Structure: { match_id: { "Home": { "firstHalf": "...", "secondHalf": "..." } } }
 # Only "Home" is stored — "Away" is always the opposite direction in the same half.
-DIRECTION_JSON_PATH = r'C:\Users\arnau\Sciebo\SharedDrive_Arnaud_Franziska\data\direction_idsse_video.json'
+DIRECTION_JSON_PATH = _config.DIRECTION_JSON
 
 # Canonical direction used ONLY for zone assignment (D/M/A × 1-5).
 # Every run is mirrored on x so that, for zoning purposes, everyone "plays"
@@ -711,11 +717,7 @@ def _temporal_iou(a_start: float, a_end: float,
 
     Returns a value in [0, 1].  Returns 0 if either interval is degenerate.
     """
-    if a_end <= a_start or b_end <= b_start:
-        return 0.0
-    intersection = max(0.0, min(a_end, b_end) - max(a_start, b_start))
-    union        = (a_end - a_start) + (b_end - b_start) - intersection
-    return intersection / union if union > 0 else 0.0
+    return _shared_temporal_iou(a_start, a_end, b_start, b_end)
 
 
 def find_best_segment(annot_row, df_auto, min_iou=0.01):
@@ -776,10 +778,6 @@ def find_best_segment(annot_row, df_auto, min_iou=0.01):
 
     best_idx = int(np.argmax(iou))
     best_iou = float(iou[best_idx])
-
-    #print(f"    [DEBUG] seg {annot_row['segment_id']} jID={ann_jid} "
-          #f"frames=[{ann_start},{ann_end}] → best_iou={best_iou:.4f} "
-          #f"(run frames=[{df_player.iloc[best_idx]['start_frame']},{df_player.iloc[best_idx]['end_frame']}])")
 
     if best_iou < min_iou:
         print(f"    [WARN] seg {annot_row['segment_id']}: best_iou={best_iou:.4f} < min_iou={min_iou} → not matched")
@@ -928,9 +926,6 @@ def process_annotation_file(annot_path: str,
     # Derive match_id from filename (DFL-MAT-XXXXXX pattern)
     fname = os.path.basename(annot_path)
     match_id = None
-    for part in fname.replace("_", "-").split("-"):
-        # match_id is the 6-char alphanumeric code after DFL-MAT-
-        pass
     import re
     m = re.search(r"DFL-MAT-([A-Z0-9]{6})", fname, re.IGNORECASE)
     if m:
@@ -1138,13 +1133,8 @@ def process_annotation_file(annot_path: str,
         goal_indicator = get_goal_indicator(scoreline, row["team"])
 
         # ── 6f. Shot-follow-up flag ───────────────────────────────────────
-        # ── 6f. Shot-follow-up flag ───────────────────────────────────────
         shot_flag = False
         if shot_window_s is not None:
-            # print(f"    [DEBUG shot] end_time_s={_safe_float(row['end_time_s']):.2f} "
-            #       f"half={half} team='{row['team']}' "
-            #       f"shots_in_half={len(df_shots[df_shots['half']==half])} "
-            #       f"shots_same_team={len(df_shots[(df_shots['half']==half) & (df_shots['team']==row['team'])])}")
             shot_flag = flag_shot_within_window(
                 elapsed_s  = _safe_float(row["end_time_s"]),
                 half       = half,
