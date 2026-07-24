@@ -46,6 +46,9 @@ ENRICHED_OUTPUT_DIR = _env_path("RIB_ENRICHED_OUTPUT_DIR", _repo_path("enriched_
 # --- Task 2a: Stats_Manual_Annotation_App.py output -------------------------
 STATS_OUTPUT_DIR = _env_path("RIB_STATS_OUTPUT_DIR", _repo_path("annotation_stats"))
 
+# --- Task 2b: Extraction_Evaluation.py false-negatives export ---------------
+FALSE_NEGATIVES_PATH = _env_path("RIB_FALSE_NEGATIVES_PATH", _repo_path("false_negatives.csv"))
+
 # --- movement_classification.py output --------------------------------------
 CLASSIFICATION_OUTPUT_DIR = _env_path(
     "RIB_CLASSIFICATION_OUTPUT_DIR", _repo_path("movement_classification"))

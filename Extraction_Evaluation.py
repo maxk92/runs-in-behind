@@ -1,23 +1,22 @@
 import pandas as pd
 import os
 
+from common import config
+from common.iou import match_by_frame_tolerance
+from common.timecodes import frames_to_timecode
+from common.annotations import annotation_file_path, discover_annotators
+
 # ── Configuration ─────────────────────────────────────────────────────────────
-MATCH_IDS = ['J03WMX', 'J03WN1', 'J03WPY', 'J03WOH', 'J03WQQ', 'J03WOY', 'J03WR9']
+MATCH_IDS = config.DEFAULT_MATCH_IDS
 HALVES    = ['firstHalf', 'secondHalf']
-PRED_DIR  = r"C:\Users\arnau\Documents\projetde\runs-in-behind\outputs_loop_with_offsets"
-GT_DIR    = r"C:\Users\arnau\Documents\projetde\runs-in-behind\annotation_app_output"
-FN_OUTPUT = r"C:\Users\arnau\Documents\projetde\runs-in-behind\false_negatives.csv"
+PRED_DIR  = config.AUTO_OUTPUT_DIR
+GT_DIR    = config.ANNOTATION_DIR
+FN_OUTPUT = config.FALSE_NEGATIVES_PATH
 FPS       = 25   # DFL framerate
 
 def frames_to_tc(frames):
     """Convert a frame number to a hh:mm:ss timecode."""
-    if pd.isna(frames):
-        return ''
-    total_sec = int(frames) // FPS
-    h  = total_sec // 3600
-    m  = (total_sec % 3600) // 60
-    s  = total_sec % 60
-    return f"{h:02d}:{m:02d}:{s:02d}"
+    return frames_to_timecode(frames, fps=FPS, fmt="hms")
 
 
 def load_pred(match_id):
@@ -30,7 +29,7 @@ def load_pred(match_id):
 
 
 def load_gt(match_id, half, annotator):
-    path = os.path.join(GT_DIR, f"DFL-MAT-{match_id}_{half}_{annotator}.csv")
+    path = annotation_file_path(GT_DIR, match_id, half, annotator)
     if not os.path.exists(path):
         return None
     df = pd.read_csv(path)
@@ -59,20 +58,7 @@ def compute_metrics_with_fn(match_id, annotator):
         pred = pred_all[pred_all['half'] == half].reset_index(drop=True)
         gt   = gt.reset_index(drop=True)
 
-        gt_matched   = [False] * len(gt)
-        pred_matched = [False] * len(pred)
-
-        for pi, prow in pred.iterrows():
-            for gi, grow in gt.iterrows():
-                if gt_matched[gi]:
-                    continue
-                if (prow['team_ha'] == grow['team']
-                        and int(prow['jID']) == int(grow['player_jid'])
-                        and ((grow['start_frame']-25 <= prow['start_frame'] <= grow['end_frame']+25)
-                        or (prow['start_frame']-25 <= grow['start_frame'] <= prow['end_frame']+25))):
-                    gt_matched[gi]   = True
-                    pred_matched[pi] = True
-                    break
+        pred_matched, gt_matched = match_by_frame_tolerance(pred, gt, tolerance_frames=25)
 
         tp = sum(pred_matched)
         total_tp += tp
@@ -90,17 +76,6 @@ def compute_metrics_with_fn(match_id, annotator):
                 fn_rows.append(row)
 
     return total_tp, total_fp, total_fn, fn_rows
-
-
-def discover_annotators(gt_dir):
-    annotators = set()
-    if not os.path.exists(gt_dir):
-        return []
-    for f in os.listdir(gt_dir):
-        if f.startswith("DFL-MAT-") and f.endswith(".csv"):
-            parts = f.replace(".csv", "").split("_")
-            annotators.add(parts[-1])
-    return sorted(annotators)
 
 
 def print_report(results, annotators):
