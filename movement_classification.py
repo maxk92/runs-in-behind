@@ -1,6 +1,6 @@
 """
-classify_movement_shape.py
-==========================
+movement_classification.py
+===========================
 Classifies each movement extracted by process_match into three shape categories:
 
   - 'straight'    : nearly straight run along the attack axis
@@ -12,12 +12,16 @@ enabling reliable geometric analysis frame by frame.
 
 Usage (as a module):
 --------------------
-    from classify_movement_shape import classify_runs_shape
+    from movement_classification import classify_runs_shape
     df_runs_classified = classify_runs_shape(df_runs, dict_traj)
 
 Usage (standalone):
 -------------------
-    python classify_movement_shape.py
+    python movement_classification.py
+
+NOTE: this is a standalone experiment -- nothing else in the repo imports
+from this module, and its output (shape/linearity_rmse/angle_deg columns)
+is not currently wired into the run-in-behind filtering pipeline.
 """
 
 import json
@@ -28,17 +32,20 @@ import numpy as np
 import pandas as pd
 from Discretisation_optimised2_1 import process_match
 
+from common import config
+from common.filters import is_run_in_behind
+
 
 # ============================================================================
 # Configuration
 # ============================================================================
 
 # Paths
-DATA_DIR   = r'C:\Users\arnau\Sciebo\SharedDrive_Arnaud_Franziska\data\open_data2223'
-JSON_PATH  = r'C:\Users\arnau\Sciebo\SharedDrive_Arnaud_Franziska\data\direction_idsse_video.json'
-OUTPUT_DIR = r'C:\Users\arnau\Documents\projetde\runs-in-behind\outputs_shape_classified'
+DATA_DIR   = config.DATA_DIR
+JSON_PATH  = config.DIRECTION_JSON
+OUTPUT_DIR = config.CLASSIFICATION_OUTPUT_DIR
 
-MATCH_IDS = ['J03WMX', 'J03WN1', 'J03WPY', 'J03WOH', 'J03WQQ', 'J03WOY', 'J03WR9']
+MATCH_IDS = config.DEFAULT_MATCH_IDS
 
 # Geometric thresholds
 LINEARITY_THRESHOLD_M = 0.35   # max perpendicular RMSE (m) to be considered linear
@@ -281,15 +288,7 @@ def main():
             )
 
             # Filter runs-in-behind (same criteria as Loop_with_setpiece_offsets)
-            df_runs = df_mov[
-                (
-                    (df_mov['possession'] == df_mov['location']) |
-                    df_mov['possession_contested']
-                ) &
-                df_mov['speed_category'].isin(['running', 'sprinting']) &
-                (df_mov['distance_m'] > 3) &
-                (df_mov['direction'] > 0.3)
-            ].copy()
+            df_runs = df_mov[is_run_in_behind(df_mov)].copy()
 
             # Classify movement shapes
             df_runs_c = classify_runs_shape(
