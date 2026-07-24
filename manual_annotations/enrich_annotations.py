@@ -17,10 +17,13 @@ The row "auto_segment_id"  can be used with panda to analyse the matched automat
 Dependencies
 ------------
     pip install pandas numpy scipy lxml floodlight-science
-    (floodlight must be importable, same as Discretisation_optimised2_1.py)
+    (floodlight must be importable, same as segmentation/discretisation.py)
 """
 
+import sys
 import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import json
 import glob
 import xml.etree.ElementTree as ET

@@ -1,5 +1,8 @@
-import pandas as pd
+import sys
 import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import pandas as pd
 
 from common import config
 from common.iou import match_by_frame_tolerance
