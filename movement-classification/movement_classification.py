@@ -24,13 +24,16 @@ from this module, and its output (shape/linearity_rmse/angle_deg columns)
 is not currently wired into the run-in-behind filtering pipeline.
 """
 
-import json
+import sys
 import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import json
 import traceback
 
 import numpy as np
 import pandas as pd
-from Discretisation_optimised2_1 import process_match
+from segmentation.discretisation import process_match
 
 from common import config
 from common.filters import is_run_in_behind
