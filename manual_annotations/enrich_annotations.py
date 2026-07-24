@@ -48,8 +48,8 @@ from common.iou import temporal_iou as _shared_temporal_iou
 DATA_DIR = _config.DATA_DIR
 
 # Folder that contains the annotation CSV(s)  (or a single file path)
-# Canonical folder -- also used by Extraction_Evaluation.py and
-# Stats_Manual_Annotation_App.py (previously a separate, differently-shaped
+# Canonical folder -- also used by manual_annotations/evaluate_extraction.py and
+# manual_annotations/annotation_agreement_stats.py (previously a separate, differently-shaped
 # "annotation_app_output" folder).
 ANNOTATION_DIR = _config.ANNOTATION_DIR
 
@@ -80,7 +80,7 @@ MIN_IOU = 0.01               # 0 = accept any overlap; 1 = perfect match only
 # The runs_behind_{match_id}.csv files (AUTO_OUTPUT_DIR) are the movements
 # already extracted AND whose kinematic indicators (distance, speed, zones,
 # pre-run window...) have ALREADY been computed by
-# Discretisation_optimised2_1.py. When an annotation is matched to one of
+# segmentation/discretisation.py. When an annotation is matched to one of
 # these automated movements (via find_best_segment / IoU >= MIN_IOU), there
 # is no need to reload the raw XML positions and recompute everything: the
 # values already present in runs_behind_*.csv are reused directly (with a
@@ -685,7 +685,7 @@ def load_automated_segments(match_id: str, auto_output_dir: str) -> pd.DataFrame
     """
     Load the automated segmentation output for a match.
 
-    The loop script (Loop_with_setpiece_offsets.py) writes one file per match:
+    The loop script (segmentation/extract_runs_behind.py) writes one file per match:
         runs_behind_{match_id}.csv
 
     That file contains ALL halves for the match in a single CSV.
@@ -1061,7 +1061,7 @@ def process_annotation_file(annot_path: str,
 
         # ── 6c. Kinematic indicators — reused from df_auto if possible ──────
         # If the annotation is matched to an automated movement, the latter
-        # already has all these indicators computed (Discretisation_optimised2_1.py)
+        # already has all these indicators computed (segmentation/discretisation.py)
         # → reuse them directly, without reloading the XML positions.
         indicators = None
         duration_source = None

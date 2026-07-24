@@ -194,7 +194,7 @@ def classify_runs_shape(df_runs: pd.DataFrame,
 
     Parameters
     ----------
-    df_runs             : filtered runs DataFrame (output of Loop_with_setpiece_offsets)
+    df_runs             : filtered runs DataFrame (output of segmentation/extract_runs_behind.py)
     dict_traj           : {team: {xID: [movement_df, ...]}} from process_match
     linearity_threshold : RMSE threshold (m) for linearity test
     diagonal_angle_deg  : angle threshold (°) for straight vs diagonal split
@@ -290,7 +290,7 @@ def main():
                 dict_direction = dict_direction,
             )
 
-            # Filter runs-in-behind (same criteria as Loop_with_setpiece_offsets)
+            # Filter runs-in-behind (same criteria as segmentation/extract_runs_behind.py)
             df_runs = df_mov[is_run_in_behind(df_mov)].copy()
 
             # Classify movement shapes

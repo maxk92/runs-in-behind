@@ -39,22 +39,22 @@ DIRECTION_JSON = _env_path("RIB_DIRECTION_JSON", _repo_path("direction_idsse_vid
 # real-time-accurate halftime gap in the tracking data.
 VIDEO_OFFSETS_JSON = _env_path("RIB_VIDEO_OFFSETS_JSON", _repo_path("offsets_idsse_videos.json"))
 
-# --- Automated-pipeline output (Loop_with_setpiece_offsets.py -> runs_behind_*.csv) ---
+# --- Automated-pipeline output (segmentation/extract_runs_behind.py -> runs_behind_*.csv) ---
 AUTO_OUTPUT_DIR = _env_path("RIB_AUTO_OUTPUT_DIR", _repo_path("runs_behind"))
 
 # --- Manual annotations (canonical schema, see common/annotations.py) -------
-# One folder shared by Extraction_Evaluation.py, Stats_Manual_Annotation_App.py,
-# and enriched_tool.py -- previously each pointed at a differently-named
+# One folder shared by manual_annotations/evaluate_extraction.py, manual_annotations/annotation_agreement_stats.py,
+# and manual_annotations/enrich_annotations.py -- previously each pointed at a differently-named
 # (and differently-shaped) folder; data/annotations/ is what's actually used.
 ANNOTATION_DIR = _env_path("RIB_ANNOTATION_DIR", _repo_path("annotations"))
 
-# --- Task 2c: enriched_tool.py output ---------------------------------------
+# --- Task 2c: manual_annotations/enrich_annotations.py output ---------------------------------------
 ENRICHED_OUTPUT_DIR = _env_path("RIB_ENRICHED_OUTPUT_DIR", _repo_path("enriched_annotations"))
 
-# --- Task 2a: Stats_Manual_Annotation_App.py output -------------------------
+# --- Task 2a: manual_annotations/annotation_agreement_stats.py output -------------------------
 STATS_OUTPUT_DIR = _env_path("RIB_STATS_OUTPUT_DIR", _repo_path("annotation_stats"))
 
-# --- Task 2b: Extraction_Evaluation.py false-negatives export ---------------
+# --- Task 2b: manual_annotations/evaluate_extraction.py false-negatives export ---------------
 FALSE_NEGATIVES_PATH = _env_path("RIB_FALSE_NEGATIVES_PATH", _repo_path("false_negatives.csv"))
 
 # --- contextualize_position_data.ipynb output -------------------------------
@@ -71,7 +71,7 @@ PITCH_CONTROL_OUTPUT_DIR = _env_path(
 # --- cut_video_to_runs.py output --------------------------------------------
 VIDEO_OUTPUT_DIR = _env_path("RIB_VIDEO_OUTPUT_DIR", _repo_path("video_clips"))
 
-# --- Shared default match-id list (used by Loop_with_setpiece_offsets.py, ---
-# --- Extraction_Evaluation.py, etc.) -- override with a comma-separated list.
+# --- Shared default match-id list (used by segmentation/extract_runs_behind.py, ---
+# --- manual_annotations/evaluate_extraction.py, etc.) -- override with a comma-separated list.
 _default_match_ids = "J03WMX,J03WN1,J03WPY,J03WOH,J03WQQ,J03WOY,J03WR9"
 DEFAULT_MATCH_IDS = _env_path("RIB_MATCH_IDS", _default_match_ids).split(",")

@@ -12,8 +12,8 @@ timestamp suffix (`{match_id}_{half}_{annotator}_{timestamp}.csv`) which
 `discover_match_annotation_files` also matches via glob.
 
 `load_annotations` deliberately does NOT normalize `player_jid` NaNs --
-Extraction_Evaluation.py drops unparsable-jid rows while
-Stats_Manual_Annotation_App.py keeps them with a sentinel value, and each
+manual_annotations/evaluate_extraction.py drops unparsable-jid rows while
+manual_annotations/annotation_agreement_stats.py keeps them with a sentinel value, and each
 caller keeps applying its own existing policy after loading.
 """
 
@@ -52,7 +52,7 @@ def discover_match_annotation_files(annotation_dir: str, match_id: str) -> dict:
     """
     Glob every annotation CSV for one match: `DFL-MAT-{match_id}_*.csv`.
     Returns {"{half}_{annotator}": path}, keyed the same way
-    Stats_Manual_Annotation_App.py's load_annotations() used to.
+    manual_annotations/annotation_agreement_stats.py's load_annotations() used to.
     """
     pattern = os.path.join(annotation_dir, f"DFL-MAT-{match_id}_*.csv")
     files = sorted(glob.glob(pattern))

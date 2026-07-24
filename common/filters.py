@@ -1,10 +1,10 @@
 """
 Single source of truth for the "run in behind" candidate filter, applied to
-the movements DataFrame produced by `Discretisation_optimised2_1.process_match`.
+the movements DataFrame produced by `segmentation.discretisation.process_match`.
 
 Previously this predicate was re-implemented independently (with drifting
-thresholds) in Loop_with_setpiece_offsets.py, movement_classification.py,
-extraction_method_comparaison.py, and old_code/extract_discrete_efforts.ipynb.
+thresholds) in segmentation/extract_runs_behind.py, movement_classification.py,
+extraction_method_comparison.py, and old_code/extract_discrete_efforts.ipynb.
 """
 
 # NOTE on the sports-science definition (Definition_Tiefenlauf.pdf):
@@ -13,7 +13,7 @@ extraction_method_comparaison.py, and old_code/extract_discrete_efforts.ipynb.
 # actually been used to produce every runs_behind_*.csv file so far:
 #   - RIB_MIN_DISTANCE_M = 2.5, not 3.0 ("in the definition the threshold is
 #     3m, but we use 2.5m to avoid computing error" -- original comment in
-#     Loop_with_setpiece_offsets.py).
+#     segmentation/extract_runs_behind.py).
 #   - RIB_MIN_DIRECTION = 0.3 thresholds the `direction` column (an L1
 #     displacement ratio dx/(|dx|+|dy|) computed in process_match, NOT a
 #     literal degree angle) as a proxy for the 45-135 degree criterion.
@@ -36,7 +36,7 @@ def is_run_in_behind(df_movements,
     progress toward goal) exceeds `min_direction`.
 
     `df_movements` must have the columns produced by
-    `Discretisation_optimised2_1.process_match`: `possession`, `location`,
+    `segmentation.discretisation.process_match`: `possession`, `location`,
     `possession_contested`, `speed_category`, `distance_m`, `direction`.
     """
     return (

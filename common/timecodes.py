@@ -1,8 +1,8 @@
 """
 Frame-number -> timecode-string conversion, parameterized to cover the two
 formats previously duplicated as separate functions:
-  - Extraction_Evaluation.py's `frames_to_tc`      -> fmt="hms"  ("hh:mm:ss")
-  - Stats_Manual_Annotation_App.py's `frame_to_timecode` -> fmt="ms" ("mm:ss.mmm")
+  - manual_annotations/evaluate_extraction.py's `frames_to_tc`      -> fmt="hms"  ("hh:mm:ss")
+  - manual_annotations/annotation_agreement_stats.py's `frame_to_timecode` -> fmt="ms" ("mm:ss.mmm")
 """
 
 import pandas as pd
@@ -12,9 +12,9 @@ def frames_to_timecode(frames, fps: float = 25, fmt: str = "hms") -> str:
     """
     Convert a frame number to a timecode string.
 
-    fmt="hms": "hh:mm:ss" (matches Extraction_Evaluation.py's frames_to_tc).
+    fmt="hms": "hh:mm:ss" (matches manual_annotations/evaluate_extraction.py's frames_to_tc).
                Returns '' for NaN input.
-    fmt="ms":  "mm:ss.mmm" (matches Stats_Manual_Annotation_App.py's
+    fmt="ms":  "mm:ss.mmm" (matches manual_annotations/annotation_agreement_stats.py's
                frame_to_timecode).
     """
     if fmt == "hms":

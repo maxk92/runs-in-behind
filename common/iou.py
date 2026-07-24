@@ -1,16 +1,16 @@
 """
 Temporal-overlap matching helpers shared by the manual-vs-automated
-evaluation/merging scripts (Extraction_Evaluation.py, Stats_Manual_Annotation_App.py,
-enriched_tool.py).
+evaluation/merging scripts (manual_annotations/evaluate_extraction.py, manual_annotations/annotation_agreement_stats.py,
+manual_annotations/enrich_annotations.py).
 
 `temporal_iou` is the one canonical IoU implementation -- previously defined
-identically (but independently) in Stats_Manual_Annotation_App.py and
-enriched_tool.py. `match_by_frame_tolerance` replaces the greedy first-fit
-matching loop that used to live inline in Extraction_Evaluation.py.
+identically (but independently) in manual_annotations/annotation_agreement_stats.py and
+manual_annotations/enrich_annotations.py. `match_by_frame_tolerance` replaces the greedy first-fit
+matching loop that used to live inline in manual_annotations/evaluate_extraction.py.
 
-Note: Stats_Manual_Annotation_App.py's `match_segments` (directional
+Note: manual_annotations/annotation_agreement_stats.py's `match_segments` (directional
 best-overlap match across a player+half candidate pool, used for
-inter-annotator agreement) and enriched_tool.py's `find_best_segment`
+inter-annotator agreement) and manual_annotations/enrich_annotations.py's `find_best_segment`
 (vectorized best-IoU match with its own column auto-detection, used to find
 the automated segment overlapping a manual annotation) are algorithmically
 distinct from each other and from `match_by_frame_tolerance` below, so they
@@ -47,7 +47,7 @@ def match_by_frame_tolerance(pred_df, gt_df, tolerance_frames=25,
 
     This is NOT a true IoU match (see `temporal_iou` for that) -- it
     preserves the exact semantics originally inlined in
-    Extraction_Evaluation.py's `compute_metrics_with_fn`.
+    manual_annotations/evaluate_extraction.py's `compute_metrics_with_fn`.
 
     Returns (pred_matched, gt_matched): two lists of booleans, aligned with
     `pred_df.reset_index(drop=True)` / `gt_df.reset_index(drop=True)`.
