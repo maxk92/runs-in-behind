@@ -25,4 +25,4 @@ python -m segmentation.extract_runs_behind        # preferred: module invocation
 python segmentation/extract_runs_behind.py        # also supported: direct file invocation
 ```
 
-Both styles work for every script under `segmentation/` and `manual_annotations/`; scripts under the hyphenated `pitch-control/`, `movement-classification/`, and `match-context/` folders support direct file invocation only (hyphens aren't valid Python module-path segments).
+Both styles work for almost every script here, including the hyphenated `movement-classification/` and `match-context/` folders (Python's `-m` resolves module paths as strings/directory lookups, not via the tokenizer, so a hyphenated folder name works fine as long as the script inside doesn't do a bare same-folder import). The one exception is `pitch-control/pitch_control_examples.py`, which does `from pitch_control_tool import ...` (same folder, unqualified) — that only resolves under direct file invocation (`python pitch-control/pitch_control_examples.py`), since `-m` puts the repo root, not `pitch-control/`, on `sys.path`.
