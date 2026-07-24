@@ -12,7 +12,7 @@ Production script that:
   7. Exports one CSV per annotation file (and optionally a combined CSV).
 
 The row "auto_segment_excel_row" contains the index of the corresponding automated segment in the Excel file. Because exel files are 1-indexed, this is the row number in the Excel file (not the DataFrame index). If no match is found, this field is NaN.
-The row "auto_segment_id"  can be used with panda to analyse the matched automated segments. It is the index of the corresponding automated segment in the DataFrame produced by the loop script (and saved as runs_behind_{match_id}.csv). If no match is found, this field is NaN.
+The row "auto_segment_id"  can be used with panda to analyse the matched automated segments. It is the index of the corresponding automated segment in the DataFrame produced by the loop script (and saved as runs_in_behind_{match_id}.csv). If no match is found, this field is NaN.
 
 Dependencies
 ------------
@@ -57,7 +57,7 @@ ANNOTATION_DIR = _config.ANNOTATION_DIR
 ANNOTATION_GLOB = "*.csv"          # e.g. "*_validated.csv"  or  "*_david.csv"
 
 # Folder where the loop script saved its per-match automated outputs
-# (the files named  runs_behind_{match_id}.csv)
+# (the files named  runs_in_behind_{match_id}.csv)
 AUTO_OUTPUT_DIR = _config.AUTO_OUTPUT_DIR
 
 # Output folder for the enriched CSVs produced by THIS script
@@ -77,13 +77,13 @@ PRE_RUN_WINDOW_S = 2.0      # k, in seconds
 MIN_IOU = 0.01               # 0 = accept any overlap; 1 = perfect match only
 
 # ── Reuse metrics already computed by the automated pipeline ───────────────
-# The runs_behind_{match_id}.csv files (AUTO_OUTPUT_DIR) are the movements
+# The runs_in_behind_{match_id}.csv files (AUTO_OUTPUT_DIR) are the movements
 # already extracted AND whose kinematic indicators (distance, speed, zones,
 # pre-run window...) have ALREADY been computed by
 # segmentation/discretisation.py. When an annotation is matched to one of
 # these automated movements (via find_best_segment / IoU >= MIN_IOU), there
 # is no need to reload the raw XML positions and recompute everything: the
-# values already present in runs_behind_*.csv are reused directly (with a
+# values already present in runs_in_behind_*.csv are reused directly (with a
 # km/h → m/s unit conversion, see _auto_row_to_indicators()).
 # Only annotations WITHOUT an automated match (or with a match whose
 # indicators are missing) still trigger extract_run_indicators().
@@ -686,12 +686,12 @@ def load_automated_segments(match_id: str, auto_output_dir: str) -> pd.DataFrame
     Load the automated segmentation output for a match.
 
     The loop script (segmentation/extract_runs_behind.py) writes one file per match:
-        runs_behind_{match_id}.csv
+        runs_in_behind_{match_id}.csv
 
     That file contains ALL halves for the match in a single CSV.
     Returns an empty DataFrame if no file is found.
     """
-    pattern = os.path.join(auto_output_dir, f"runs_behind_{match_id}.csv")
+    pattern = os.path.join(auto_output_dir, f"runs_in_behind_{match_id}.csv")
     hits = glob.glob(pattern)
     if not hits:
         # Broader fallback: any CSV in auto_output_dir that contains match_id
@@ -830,7 +830,7 @@ def flag_shot_within_window(elapsed_s: float, half: str, run_team: str,
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Mapping "expected output INDICATOR_COLS column" -> "equivalent column in
-# runs_behind_{match_id}.csv (df_auto)". The speed columns in df_auto are in
+# runs_in_behind_{match_id}.csv (df_auto)". The speed columns in df_auto are in
 # km/h; the enrichment pipeline expects m/s, hence the (/3.6) conversion
 # applied in _auto_row_to_indicators().
 _AUTO_COL_MAP = {
@@ -867,7 +867,7 @@ _AUTO_KMH_COLS = {"mean_vel_ms", "peak_vel_ms", "pre_run_mean_vel_ms", "pre_run_
 def _auto_row_to_indicators(auto_row: pd.Series, indicator_cols: list) -> dict | None:
     """
     Build an indicators dict (same keys as INDICATOR_COLS) from an
-    already-computed row of df_auto (runs_behind_{match_id}.csv).
+    already-computed row of df_auto (runs_in_behind_{match_id}.csv).
 
     Returns None if an expected source column is missing from the auto
     DataFrame (in which case the caller must recompute from raw positions).
@@ -1207,7 +1207,7 @@ def process_annotation_file(annot_path: str,
     n_matched = df_enriched["auto_segment_id"].notna().sum()
     print(f"  ✓ {len(df_enriched)} runs enriched "
           f"({n_matched} matched to automated segments, "
-          f"{n_reused_from_auto} indicators reused from runs_behind_*.csv "
+          f"{n_reused_from_auto} indicators reused from runs_in_behind_*.csv "
           f"— no recomputation from raw positions)")
 
     return df_enriched

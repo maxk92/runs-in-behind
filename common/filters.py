@@ -10,7 +10,7 @@ extraction_method_comparison.py, and old_code/extract_discrete_efforts.ipynb.
 # NOTE on the sports-science definition (Definition_Tiefenlauf.pdf):
 # it specifies a minimum distance of 3m and a movement angle of 45-135
 # degrees. The values below are the team's practical stand-ins that have
-# actually been used to produce every runs_behind_*.csv file so far:
+# actually been used to produce every runs_in_behind_*.csv file so far:
 #   - RIB_MIN_DISTANCE_M = 2.5, not 3.0 ("in the definition the threshold is
 #     3m, but we use 2.5m to avoid computing error" -- original comment in
 #     segmentation/extract_runs_behind.py).
@@ -18,7 +18,7 @@ extraction_method_comparison.py, and old_code/extract_discrete_efforts.ipynb.
 #     displacement ratio dx/(|dx|+|dy|) computed in process_match, NOT a
 #     literal degree angle) as a proxy for the 45-135 degree criterion.
 # Changing these numbers changes which movements qualify as runs-in-behind
-# and will change every downstream runs_behind_*.csv output.
+# and will change every downstream runs_in_behind_*.csv output.
 RIB_MIN_DISTANCE_M = 2.5
 RIB_MIN_DIRECTION = 0.3
 RIB_SPEED_CATEGORIES = {"running", "sprinting"}

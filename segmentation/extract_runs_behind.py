@@ -61,7 +61,7 @@ for match_id in ls_match_ids:
         # ── Per-match filter and save ─────────────────────────────────────────
         df_runs = df_mov[is_run_in_behind(df_mov)]
         df_runs.to_csv(
-            os.path.join(output_dir, f'runs_behind_{match_id}.csv'), index=False
+            os.path.join(output_dir, f'runs_in_behind_{match_id}.csv'), index=False
         )
         print(f"  → {len(df_runs)} runs-in-behind saved for {match_id}")
 

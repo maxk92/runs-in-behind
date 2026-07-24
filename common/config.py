@@ -39,8 +39,8 @@ DIRECTION_JSON = _env_path("RIB_DIRECTION_JSON", _repo_path("direction_idsse.jso
 # real-time-accurate halftime gap in the tracking data.
 VIDEO_OFFSETS_JSON = _env_path("RIB_VIDEO_OFFSETS_JSON", _repo_path("offsets_idsse_videos.json"))
 
-# --- Automated-pipeline output (segmentation/extract_runs_behind.py -> runs_behind_*.csv) ---
-AUTO_OUTPUT_DIR = _env_path("RIB_AUTO_OUTPUT_DIR", _repo_path("runs_behind"))
+# --- Automated-pipeline output (segmentation/extract_runs_behind.py -> runs_in_behind_*.csv) ---
+AUTO_OUTPUT_DIR = _env_path("RIB_AUTO_OUTPUT_DIR", _repo_path("runs_in_behind"))
 
 # --- Manual annotations (canonical schema, see common/annotations.py) -------
 # One folder shared by manual_annotations/evaluate_extraction.py, manual_annotations/annotation_agreement_stats.py,

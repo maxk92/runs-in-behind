@@ -23,7 +23,7 @@ def frames_to_tc(frames):
 
 
 def load_pred(match_id):
-    path = os.path.join(PRED_DIR, f"runs_behind_{match_id}.csv")
+    path = os.path.join(PRED_DIR, f"runs_in_behind_{match_id}.csv")
     if not os.path.exists(path):
         return None
     df = pd.read_csv(path)
