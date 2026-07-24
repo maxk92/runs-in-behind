@@ -33,3 +33,10 @@ def frames_to_timecode(frames, fps: float = 25, fmt: str = "hms") -> str:
         return f"{minutes:02d}:{seconds:06.3f}"
 
     raise ValueError(f"Unknown fmt: {fmt!r} (expected 'hms' or 'ms')")
+
+
+def hms_to_seconds(hms: str) -> float:
+    """Convert an 'hh:mm:ss' string (as used in offsets_idsse_videos.json)
+    to total seconds."""
+    h, m, s = hms.split(":")
+    return int(h) * 3600 + int(m) * 60 + float(s)

@@ -1,13 +1,17 @@
+import json
 import os
-import pandas as pd
 import subprocess
 
+import pandas as pd
+
+from common import config
+from common.timecodes import hms_to_seconds
+
 # Parameters
-match_id = "J03WPY"
-match_name = "SF_12ST_F95_FCN"
-video_path = "/home/max/drive/data/videos_openData2223/" + match_name + ".mp4"
-csv_path = "/home/max/drive/coding/projects/27___deepRuns/data_deepruns/timecodes_" + match_id + ".csv"
-output_dir = "/home/max/drive/data/videos_openData2223/" + match_id
+match_id   = "J03WPY"
+match_name = "SF_12ST_F95_FCN"     # video filename (without extension) for match_id
+video_path = os.path.join(config.VIDEO_DIR, match_name + ".mp4")
+output_dir = os.path.join(config.VIDEO_OUTPUT_DIR, match_id)
 fps = 25  # adjust if different
 
 sec_before = 3
@@ -15,16 +19,43 @@ freeze_before = 1
 freeze_after = 1
 sec_after = 2
 
-# Load CSV
+os.makedirs(output_dir, exist_ok=True)
+
+# Load the automated runs-in-behind output for this match (both halves),
+# written by Loop_with_setpiece_offsets.py as runs_behind_{match_id}.csv.
+# (Previously this read a data_deepruns/timecodes_{match_id}.csv file with
+# absolute_start_frame/absolute_end_frame columns that no script in this
+# repo produces -- see below for how the video seek time is now derived
+# from the half-relative start_frame/end_frame instead.)
+csv_path = os.path.join(config.AUTO_OUTPUT_DIR, f"runs_behind_{match_id}.csv")
 df = pd.read_csv(csv_path)
 
-for idx, row in df.iterrows():
-    start_frame = row['absolute_start_frame']
-    end_frame = row['absolute_end_frame']
+# Per-half video-sync offsets: the video timestamp at which each half's
+# tracking data (frame 0) begins. Needed because match recordings don't
+# start exactly at kickoff, and the real-time halftime gap isn't present in
+# the tracking data at all. Defaults to 00:00:00 for any match/half not
+# listed (or if the offsets file itself is missing/unreadable), so a
+# missing/broken offsets file only costs sync accuracy, not a hard crash.
+try:
+    with open(config.VIDEO_OFFSETS_JSON, "r") as f:
+        video_offsets = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError) as exc:
+    print(f"[WARN] Could not load video offsets JSON at '{config.VIDEO_OFFSETS_JSON}': "
+          f"{exc}. Assuming 00:00:00 offset for every half.")
+    video_offsets = {}
+half_offset_s = {
+    half: hms_to_seconds(video_offsets.get(match_id, {}).get(half, "00:00:00"))
+    for half in ("firstHalf", "secondHalf")
+}
 
-    # Timepoints
-    run_start_sec = start_frame / fps
-    run_end_sec = end_frame / fps
+for idx, row in df.iterrows():
+    start_frame = row['start_frame']
+    end_frame   = row['end_frame']
+    offset_sec  = half_offset_s[row['half']]
+
+    # Timepoints (seconds into the actual video file)
+    run_start_sec = offset_sec + start_frame / fps
+    run_end_sec   = offset_sec + end_frame / fps
 
     pre_start_sec = max(run_start_sec - 3, 0)
     pre_freeze_time = run_start_sec

@@ -31,6 +31,14 @@ VIDEO_DIR = _env_path("RIB_VIDEO_DIR", "/home/max/drive/data/videos_openData2223
 # `dict_direction[match_id]['Home'][half]` -> 'left_to_right' | 'right_to_left'
 DIRECTION_JSON = _env_path("RIB_DIRECTION_JSON", _repo_path("direction_idsse_videos.json"))
 
+# --- Video-sync offsets JSON --------------------------------------------------
+# `{match_id: {'firstHalf': 'hh:mm:ss', 'secondHalf': 'hh:mm:ss'}}` -- the
+# video-file timestamp at which each half's tracking data (frame 0) begins.
+# Needed by cut_video_to_runs.py to seek into the raw match video, since
+# recordings don't start exactly at kickoff and don't include a
+# real-time-accurate halftime gap in the tracking data.
+VIDEO_OFFSETS_JSON = _env_path("RIB_VIDEO_OFFSETS_JSON", _repo_path("offsets_idsse_videos.json"))
+
 # --- Automated-pipeline output (Loop_with_setpiece_offsets.py -> runs_behind_*.csv) ---
 AUTO_OUTPUT_DIR = _env_path("RIB_AUTO_OUTPUT_DIR", _repo_path("runs_behind"))
 
