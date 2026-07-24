@@ -1,6 +1,6 @@
 # runs-in-behind
 
-Football/soccer analytics research project extracting and analyzing **deep runs** (Tiefenläufe) — a dynamic vertical movement toward the opponent's goal by a player not in ball possession — from DFL (Deutsche Fußball Liga) Open Data. See `CLAUDE.md` for full pipeline documentation, data-path configuration, and CSV schemas.
+Football/soccer analytics research project extracting and analyzing **runs in behind** (Tiefenläufe) — a dynamic vertical movement toward the opponent's goal by a player not in ball possession — from DFL (Deutsche Fußball Liga) Open Data. See `CLAUDE.md` for full pipeline documentation, data-path configuration, and CSV schemas.
 
 ## Layout
 

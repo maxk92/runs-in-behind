@@ -26,7 +26,8 @@ os.makedirs(output_dir, exist_ok=True)
 
 # Load the automated runs-in-behind output for this match (both halves),
 # written by segmentation/extract_runs_behind.py as runs_behind_{match_id}.csv.
-# (Previously this read a data_deepruns/timecodes_{match_id}.csv file with
+# (Previously this read a timecodes_{match_id}.csv file from an older,
+# now-removed output directory, with
 # absolute_start_frame/absolute_end_frame columns that no script in this
 # repo produces -- see below for how the video seek time is now derived
 # from the half-relative start_frame/end_frame instead.)
