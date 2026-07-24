@@ -4,7 +4,7 @@ compare_discretisation.py
 Visual comparison of the OLD vs NEW velocity segmentation (discretisation)
 approaches on DFL tracking data for a specific player and time window.
 
-OLD approach : simple valley detection only (extract_discrete_efforts.ipynb)
+OLD approach : simple valley detection only (old_code/extract_discrete_efforts.ipynb)
 NEW approach : valley detection + metabolic-power sub-segmentation
                + vectorised valley filtering
                + setpiece blackout exclusion (Discretisation_optimised2_1.py)
@@ -53,6 +53,9 @@ from Discretisation_optimised2_1 import (
     SETPIECE_OFFSETS,
 )
 
+from common import config
+from common.filters import RIB_MIN_DISTANCE_M, RIB_MIN_DIRECTION, RIB_SPEED_CATEGORIES
+
 
 # ============================================================================
 # ── CONFIG  (edit these freely) ─────────────────────────────────────────────
@@ -64,8 +67,8 @@ HALF         = "firstHalf"          # "firstHalf" or "secondHalf"
 START_TIME   = "07:30"              # MM:SS  (match time, NOT UTC)
 END_TIME     = "08:00"              # MM:SS
 
-DATA_DIR  = r"C:\Users\arnau\Sciebo\SharedDrive_Arnaud_Franziska\data\open_data2223"
-JSON_PATH = r"C:\Users\arnau\Sciebo\SharedDrive_Arnaud_Franziska\data\direction_idsse_video.json"
+DATA_DIR  = config.DATA_DIR
+JSON_PATH = config.DIRECTION_JSON
 
 # Butterworth filter parameters (must match your pipeline settings)
 BUTTERWORTH_Wn    = 0.5
@@ -82,10 +85,9 @@ MIN_SEGMENT_FRAMES  = 10
 # OLD pipeline parameter
 OLD_MIN_VALLEY_DISTANCE = 10
 
-# Run-in-behind classification criteria (from Loop_with_setpiece_offsets.py)
-RIB_SPEED_CATEGORIES = {"running", "sprinting"}
-RIB_MIN_DISTANCE_M   = 3.0
-RIB_MIN_DIRECTION    = 0.3
+# Run-in-behind classification criteria -- imported from common.filters (the
+# single source of truth) instead of a local copy, which had drifted to
+# distance_m > 3.0 vs the production value of > 2.5 used everywhere else.
 
 
 # ============================================================================
