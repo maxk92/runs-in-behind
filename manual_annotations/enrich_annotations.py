@@ -38,6 +38,18 @@ from floodlight.transforms.filter import butterworth_lowpass
 
 from common import config as _config
 from common.iou import temporal_iou as _shared_temporal_iou
+from segmentation.discretisation import (
+    get_play_direction as _disc_get_play_direction,
+    assign_zone,
+    classify_speed_category,
+    compute_metabolic_power,
+    smooth_possession,
+    _build_time_anchors,
+    parse_goals_and_shots,
+    compute_scoreline_vectorized,
+    compute_goal_indicator_vectorized,
+    flag_shot_within_window_vectorized,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -99,35 +111,10 @@ FRAMERATE         = 25      # frames per second
 # Only "Home" is stored — "Away" is always the opposite direction in the same half.
 DIRECTION_JSON_PATH = _config.DIRECTION_JSON
 
-# Canonical direction used ONLY for zone assignment (D/M/A × 1-5).
-# Every run is mirrored on x so that, for zoning purposes, everyone "plays"
-# in this direction — raw x_start/x_mid/x_end/y_* stay untouched.
-ZONE_TARGET_DIRECTION = "right_to_left"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PITCH ZONE DEFINITIONS
-# ─────────────────────────────────────────────────────────────────────────────
-#
-# Standard DFL coordinate system:
-#   x ∈ [-52.5, 52.5]  (negative = left goal, positive = right goal)
-#   y ∈ [-34,   34  ]  (negative = bottom touchline)
-#
-# Vertical bands (5 channels) based on horizontal cut-points requested:
-#   corner flag → penalty-box line → near post → far post → penalty-box line → corner flag
-#   Approx. y boundaries: -34, -20.16, -3.66, 3.66, 20.16, 34
-#   (penalty area width = 40.32 m wide → ±20.16; goal posts ±3.66)
-#
-# Horizontal thirds (3 zones):
-#   Defensive third   x < -17.5
-#   Middle third     -17.5 ≤ x ≤ 17.5
-#   Attacking third   x >  17.5
-#
-# Combined: 3 thirds × 5 channels = 15 zones, labelled as e.g. "D1", "M3", "A5"
-#   Third prefix: D = defensive, M = middle, A = attacking
-#   Channel suffix R, HR, C, HL,L (Right, Half Right, Center, Half Left, Left) from bottom (negative y) to top (positive y)
-
-THIRD_BOUNDARIES_X = [-17.5, 17.5]                # two cut-points → three thirds
-CHANNEL_BOUNDARIES_Y = [-20.16, -3.66, 3.66, 20.16]  # four cut-points → five channels
+# Pitch-zone constants (THIRD_BOUNDARIES_X, CHANNEL_BOUNDARIES_Y) and the
+# ZONE_TARGET_DIRECTION convention now live in segmentation/discretisation.py
+# — assign_zone() is imported from there (see imports above) so zoning is
+# guaranteed identical between the automated and enrichment pipelines.
 
 
 def load_play_directions(path: str = DIRECTION_JSON_PATH) -> dict:
@@ -149,65 +136,18 @@ def load_play_directions(path: str = DIRECTION_JSON_PATH) -> dict:
 # Loaded once at import time.
 PLAY_DIRECTIONS = load_play_directions()
 
-_OPPOSITE_DIRECTION = {
-    "left_to_right": "right_to_left",
-    "right_to_left": "left_to_right",
-}
-
-
 def get_play_direction(match_id: str, team: str, half: str,
                        directions: dict = PLAY_DIRECTIONS) -> str | None:
     """
     Return 'left_to_right' or 'right_to_left' — the direction `team`
     ('Home' or 'Away') is attacking during `half`.
 
-    Only "Home" is stored in the JSON; "Away" is derived as the opposite
-    direction in the same half. Returns None if unknown (missing match_id,
-    missing half, or unrecognised team), in which case callers should skip
-    normalisation rather than guess.
+    Thin wrapper around segmentation.discretisation.get_play_direction (same
+    lookup logic — "Home" is stored in the JSON, "Away" is derived as the
+    opposite direction), kept so existing call sites here don't need to
+    change their argument order.
     """
-    home_dir = directions.get(match_id, {}).get("Home", {}).get(half)
-    if home_dir is None:
-        return None
-    if team == "Home":
-        return home_dir
-    if team == "Away":
-        return _OPPOSITE_DIRECTION.get(home_dir)
-    return None
-
-
-def assign_zone(x: float, y: float, direction: str | None = None,
-                target: str = ZONE_TARGET_DIRECTION) -> tuple[str, str]:
-    """
-    Return a zone label like 'D1', 'M3', 'A5' for a given (x, y) position.
-
-    If `direction` is given and differs from `target`, x and y are mirrored first
-    so that every run is zoned as if it were played in `target` direction
-    (e.g. everyone "plays right to left"). This only affects which zone
-    label is returned — it does not mutate the caller's raw coordinates.
-    """
-    if direction is not None and direction == target:
-        x = -x
-        y = -y
-    # Horizontal third
-    if x < THIRD_BOUNDARIES_X[0]:
-        third = "D"
-    elif x <= THIRD_BOUNDARIES_X[1]:
-        third = "M"
-    else:
-        third = "A"
-    # Vertical channel (1 = most negative y)
-    if y < CHANNEL_BOUNDARIES_Y[0]:
-        channel = "R"
-    elif y < CHANNEL_BOUNDARIES_Y[1]:
-        channel = "HR"
-    elif y < CHANNEL_BOUNDARIES_Y[2]:
-        channel = "C"
-    elif y < CHANNEL_BOUNDARIES_Y[3]:
-        channel = "HL"
-    else:
-        channel = "L"
-    return third, channel
+    return _disc_get_play_direction(directions, match_id, team, half)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -232,16 +172,21 @@ def find_dfl_file(data_dir: str, match_id: str, keyword: str) -> str:
 def load_position_data(match_id: str, data_dir: str):
     """
     Load raw position data using floodlight.
-    Returns (xy_dict, teamsheets, pitch)
-      xy_dict = {half: {team: XY object}}
+    Returns (xy_dict, teamsheets, pitch, possession_dict)
+      xy_dict         = {half: {team: XY object}}
+      possession_dict = {half: array}  raw per-frame possession flag
+                         (1 = Home has the ball), straight from the DFL
+                         positions file — same source discretisation.py uses
+                         for possession_ratio/possession_contested (see
+                         `possession_raw` in segmentation/discretisation.py).
     """
     path_pos  = find_dfl_file(data_dir, match_id, "positions")
     path_info = find_dfl_file(data_dir, match_id, "matchinformation")
-    xy, _possession, _ballstatus, teamsheets, pitch = dfl.read_position_data_xml(
+    xy, possession, _ballstatus, teamsheets, pitch = dfl.read_position_data_xml(
         path_pos, path_info,
         teamsheet_home=None, teamsheet_away=None,
     )
-    return xy, teamsheets, pitch
+    return xy, teamsheets, pitch, possession
 
 
 def compute_velocities(xy_half_team, Wn=BUTTERWORTH_WN, order=BUTTERWORTH_ORDER):
@@ -336,207 +281,14 @@ def build_person_id_to_xid(teamsheets: dict) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS: Event data → goals and shots
 # ─────────────────────────────────────────────────────────────────────────────
-
-def _utc_to_elapsed(event_utc: pd.Timestamp,
-                    kickoff_utc: pd.Timestamp,
-                    second_half_utc: pd.Timestamp | None) -> tuple[float, str]:
-    """
-    Convert an event UTC timestamp to (elapsed_s_in_half, half_label).
-    elapsed_s is measured from the respective half kickoff.
-    """
-    if second_half_utc is None or event_utc < second_half_utc:
-        return (event_utc - kickoff_utc).total_seconds(), "firstHalf"
-    else:
-        return (event_utc - second_half_utc).total_seconds(), "secondHalf"
-
-
-def parse_events_xml(match_id: str, data_dir: str) -> dict:
-    path_events = find_dfl_file(data_dir, match_id, "events")
-    path_info   = find_dfl_file(data_dir, match_id, "matchinformation")
-
-    # ── Kickoff UTC from matchinfo ───────────────────────────────────────
-    info_root   = ET.parse(path_info).getroot()
-    kickoff_str = info_root.find(".//KickoffTime")
-    kickoff_utc = (pd.Timestamp(kickoff_str.text).tz_convert("UTC")
-                   if kickoff_str is not None and kickoff_str.text else None)
-
-    # ── Team IDs home/away ────────────────────────────────────────────────
-    home_team_id = away_team_id = None
-    for el in info_root.iter():
-        role = el.get("Role", "")
-        tid  = el.get("TeamId") or el.get("TeamID", "")
-        if not tid:
-            continue
-        if role == "home":
-            home_team_id = tid
-        elif role in ("guest", "away"):
-            away_team_id = tid
-
-    # ── Parse events XML ──────────────────────────────────────────────────
-    ev_root = ET.parse(path_events).getroot()
-
-    # First pass: find kickoffs via GameSection (reliable)
-    # The XML may contain several KickOff events (restart after a goal, etc.)
-    # → we rely on GameSection="firstHalf" / "secondHalf"
-    kickoff_utc_from_xml = None
-    second_half_utc      = None
-    all_kickoff_times    = []
-
-    for event in ev_root.findall("Event"):
-        t_str = event.attrib.get("EventTime")
-        if not t_str:
-            continue
-        for child in event:
-            if child.tag != "KickOff":
-                continue
-            ts      = pd.Timestamp(t_str).tz_convert("UTC")
-            section = child.get("GameSection", "")
-            all_kickoff_times.append(ts)
-            if section == "firstHalf" and kickoff_utc_from_xml is None:
-                kickoff_utc_from_xml = ts
-            elif section == "secondHalf" and second_half_utc is None:
-                second_half_utc = ts
-
-    # If GameSection is absent: fallback — first kickoff = 1st half,
-    # then look for a gap > 10 min to find the start of the 2nd half
-    all_kickoff_times.sort()
-    if not all_kickoff_times:
-        raise ValueError(f"No KickOff events found for match {match_id}")
-
-    if kickoff_utc_from_xml is None:
-        kickoff_utc_from_xml = all_kickoff_times[0]
-
-    if second_half_utc is None:
-        for i in range(1, len(all_kickoff_times)):
-            gap = (all_kickoff_times[i] - all_kickoff_times[i - 1]).total_seconds()
-            if gap > 600:   # pause > 10 min → start of the 2nd half
-                second_half_utc = all_kickoff_times[i]
-                break
-
-    # Prefer the kickoff found in matchinfo, fall back to the one from the XML
-    if kickoff_utc is None:
-        kickoff_utc = kickoff_utc_from_xml
-
-    print(f"  Kickoff 1st half : {kickoff_utc}")
-    print(f"  Kickoff 2nd half : {second_half_utc}")
-
-    # Tags that indicate a shot (regardless of nesting depth)
-    SHOT_TAGS = {"ShotAtGoal", "ShotOnTarget", "ShotOffTarget",
-                 "SavedShot", "ShotWide", "ShotHigh", "BlockedShot"}
-
-    goal_rows  = []
-    shot_rows  = []
-    home_score = 0
-    away_score = 0
-
-    for event in ev_root.findall("Event"):
-        t_str = event.attrib.get("EventTime")
-        if not t_str:
-            continue
-        event_utc = pd.Timestamp(t_str).tz_convert("UTC")
-        elapsed_s, half = _utc_to_elapsed(event_utc, kickoff_utc, second_half_utc)
-
-        # Walk all descendants to find ShotAtGoal
-        # (may be a direct child OR wrapped in <Penalty>, <FreeKick>, etc.)
-        for shot_el in event.iter():
-            if shot_el.tag not in SHOT_TAGS:
-                continue
-
-            # Team is an attribute of the shot tag itself
-            team_id   = shot_el.get("Team", "")
-            shot_team = "Home" if team_id == home_team_id else "Away"
-
-            shot_rows.append({
-                "elapsed_s": elapsed_s,
-                "half":      half,
-                "team":      shot_team,
-                "shot_type": shot_el.tag,
-            })
-
-            # Goal = SuccessfulShot direct child of the shot tag
-            goal_el = shot_el.find("SuccessfulShot")
-            if goal_el is not None:
-                if shot_team == "Home":
-                    home_score += 1
-                else:
-                    away_score += 1
-                goal_rows.append({
-                    "elapsed_s":    elapsed_s,
-                    "half":         half,
-                    "scoring_team": shot_team,
-                    "home_score":   home_score,
-                    "away_score":   away_score,
-                })
-
-    df_goals = (pd.DataFrame(goal_rows) if goal_rows
-                else pd.DataFrame(columns=["elapsed_s", "half", "scoring_team",
-                                           "home_score", "away_score"]))
-    df_shots = (pd.DataFrame(shot_rows) if shot_rows
-                else pd.DataFrame(columns=["elapsed_s", "half", "team", "shot_type"]))
-
-    print(f"  Events parsed: {len(df_goals)} goals, {len(df_shots)} shots")
-    if not df_goals.empty:
-        print(df_goals[["half", "elapsed_s", "scoring_team",
-                         "home_score", "away_score"]].to_string(index=False))
-
-    return {
-        "goals":           df_goals,
-        "shots":           df_shots,
-        "kickoff_utc":     kickoff_utc,
-        "second_half_utc": second_half_utc,
-    }
-
-def get_scoreline_at(elapsed_s: float, half: str,
-                     df_goals: pd.DataFrame) -> str:
-    """
-    Return the scoreline string 'H–A' at the moment (half, elapsed_s).
-    elapsed_s is seconds since the start of the respective half.
-    """
-    if df_goals.empty:
-        return "0-0"
-
-    # Convert everything to a single "total_elapsed" for comparison
-    # firstHalf: 0–45*60;  secondHalf: 45*60 + elapsed
-    def to_total(row):
-        return row["elapsed_s"] if row["half"] == "firstHalf" else 45 * 60 + row["elapsed_s"]
-
-    run_total = elapsed_s if half == "firstHalf" else 45 * 60 + elapsed_s
-    df_goals = df_goals.copy()
-    df_goals["total_elapsed"] = df_goals.apply(to_total, axis=1)
-
-    prior = df_goals[df_goals["total_elapsed"] <= run_total]
-    if prior.empty:
-        return "0-0"
-    last = prior.iloc[-1]
-    return f"{int(last['home_score'])}-{int(last['away_score'])}"
-
-
-def get_goal_indicator(scoreline: str, team: str) -> int:
-    """
-    Signed "goal-deficit" indicator for the run, from the runner's team
-    perspective, based on the scoreline 'H-A' at the moment of the run.
-
-    diff = away_score - home_score  (i.e. how many goals Away leads by;
-           negative means Home leads)
-
-    If the runner is on the Away team  -> indicator =  diff
-    If the runner is on the Home team  -> indicator = -diff
-
-    Examples (Home-Away):
-      0-1 (Away +1)  -> Away run = +1, Home run = -1
-      1-2 (Away +1)  -> Away run = +1, Home run = -1
-      0-2 (Away +2)  -> Away run = +2, Home run = -2
-      2-0 (Home +2)  -> Away run = -2, Home run = +2
-      1-1 (level)    -> 0 for either team
-    """
-    try:
-        home_s_str, away_s_str = scoreline.split("-")
-        home_s, away_s = int(home_s_str), int(away_s_str)
-    except (AttributeError, ValueError):
-        return np.nan
-
-    diff = away_s - home_s
-    return diff if team == "Away" else -diff
+#
+# Kickoff-time anchoring, goal/shot parsing, scoreline lookup and the
+# goal-deficit indicator are now imported from segmentation/discretisation.py
+# (_build_time_anchors, parse_goals_and_shots, compute_scoreline_vectorized,
+# compute_goal_indicator_vectorized, flag_shot_within_window_vectorized) —
+# this used to be a second, independent implementation of the same logic,
+# which could silently drift from the automated pipeline's scoreline/goal
+# figures. See process_annotation_file() for how these are called.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -549,7 +301,8 @@ def extract_run_indicators(start_frame: int, end_frame: int,
                            pid_to_xid: dict,
                            match_id: str | None = None,
                            team: str | None = None,
-                           pre_window_s: float | None = PRE_RUN_WINDOW_S) -> dict | None:
+                           pre_window_s: float | None = PRE_RUN_WINDOW_S,
+                           possession_smoothed: dict | None = None) -> dict | None:
     """
     Compute kinematic indicators for a single run from raw position data.
 
@@ -562,13 +315,19 @@ def extract_run_indicators(start_frame: int, end_frame: int,
     pid_to_xid             : {person_id: (team_loc, xID)} from build_person_id_to_xid()
     match_id, team         : used to look up playing direction (via
                               get_play_direction) so that zone_start/zone_end
-                              are normalised for playing direction. If either
+                              and the direction/attack_sign metrics are
+                              normalised for playing direction. If either
                               is None, or the direction is unknown, zones are
-                              computed WITHOUT normalisation (raw x/y).
+                              computed WITHOUT normalisation (raw x/y) and
+                              attack_sign defaults to +1.
     pre_window_s           : length (in seconds) of the "pre-run" window used
                               to compute pre_run_mean_vel_ms / pre_run_peak_vel_ms
                               (the k seconds immediately BEFORE start_frame).
                               Set to None (or <= 0) to skip this computation.
+    possession_smoothed    : {half: array} lightly-smoothed raw possession
+                              flag (1 = Home), from _get_smoothed_possession().
+                              If None, possession/possession_ratio/
+                              possession_contested are returned as NaN.
 
     Returns a dict of indicators, or None if the player/frames are not found.
     """
@@ -619,14 +378,21 @@ def extract_run_indicators(start_frame: int, end_frame: int,
 
     x_valid = x_seg[valid]
     y_valid = y_seg[valid]
-    v_valid = v_seg[~np.isnan(v_seg)] if not np.all(np.isnan(v_seg)) else np.array([0.0])
 
     dx = np.diff(x_valid)
     dy = np.diff(y_valid)
     length_m  = float(np.sqrt(dx**2 + dy**2).sum())
     duration_s = (ef - sf) / FRAMERATE
+
+    # Peak speed / frame — same masked-argmax methodology as
+    # segmentation/discretisation.py's summarize_movements_to_dataframe(),
+    # so peak_vel_ms/peak_frame match exactly when this run coincides with
+    # an automated movement.
+    valid_v    = np.where(np.isnan(v_seg), -np.inf, v_seg)
+    peak_idx   = int(np.argmax(valid_v))
+    peak_vel   = float(v_seg[peak_idx]) if not np.isnan(v_seg[peak_idx]) else 0.0
+    peak_frame = sf + peak_idx
     mean_vel   = float(np.nanmean(v_seg))          # m/s
-    peak_vel   = float(np.nanmax(v_valid)) if v_valid.size > 0 else 0.0
 
     x_start = float(x_valid[0])
     y_start = float(y_valid[0])
@@ -635,25 +401,66 @@ def extract_run_indicators(start_frame: int, end_frame: int,
     x_mid   = float(np.nanmedian(x_valid))
     y_mid   = float(np.nanmedian(y_valid))
 
-    direction = None
+    play_direction = None
     if match_id is not None and team is not None:
-        direction = get_play_direction(match_id, team, half)
-        if direction is None:
+        play_direction = get_play_direction(match_id, team, half)
+        if play_direction is None:
             print(f"    [WARN] Unknown playing direction for match={match_id} "
-                  f"team={team} half={half} — zone NOT normalised for this run.")
+                  f"team={team} half={half} — zone/direction NOT normalised for this run.")
 
-    zone_x_start, zone_y_start = assign_zone(x_start, y_start, direction=direction)
-    zone_x_mid, zone_y_mid     = assign_zone(x_mid, y_mid, direction=direction)
-    zone_x_end, zone_y_end     = assign_zone(x_end, y_end, direction=direction)
+    zone_x_start, zone_y_start = assign_zone(x_start, y_start, direction=play_direction)
+    zone_x_mid, zone_y_mid     = assign_zone(x_mid, y_mid, direction=play_direction)
+    zone_x_end, zone_y_end     = assign_zone(x_end, y_end, direction=play_direction)
     zone_start = f"{zone_x_start}{zone_y_start}" if isinstance(zone_x_start, str) else zone_x_start
     zone_mid   = f"{zone_x_mid}{zone_y_mid}"     if isinstance(zone_x_mid, str) else zone_x_mid
     zone_end   = f"{zone_x_end}{zone_y_end}"     if isinstance(zone_x_end, str) else zone_x_end
 
+    # Movement-angle proxy ("direction"/"attack_sign") — identical formula
+    # to discretisation.py's vectorised step 8 (dx / (|dx|+|dy|), signed by
+    # playing direction), evaluated here for a single run.
+    dxe   = x_end - x_start
+    dye   = y_end - y_start
+    denom = abs(dxe) + abs(dye)
+    base_direction = dxe / denom if denom > 0 else 0.0
+    attack_sign      = {"left_to_right": 1, "right_to_left": -1}.get(play_direction, 1)
+    direction_metric = base_direction * attack_sign
+
+    speed_category = classify_speed_category(peak_vel * 3.6)
+
+    # Metabolic energy cost — approximation caveat: discretisation.py
+    # computes acceleration (np.gradient) over the full Layer-1 valley
+    # segment BEFORE it gets power-split into individual movements, so its
+    # total_energy_cost_J benefits from context outside [start_frame,
+    # end_frame]. That segment boundary isn't recoverable from a bare frame
+    # range, so here the gradient is taken over this run's own frames only
+    # — edge effects mean the value can differ slightly from what the
+    # automated pipeline would produce for the exact same run.
+    _power, _accel, ec = compute_metabolic_power(v_seg, framerate=FRAMERATE)
+    v_safe = np.where(np.isnan(v_seg), 0.0, v_seg)
+    total_energy_cost_J = float(np.nansum(np.maximum(ec, 0) * v_safe * (1.0 / FRAMERATE)))
+
+    # Possession — majority vote over the (lightly-smoothed) raw possession
+    # flag during the run, same methodology as
+    # summarize_movements_to_dataframe()'s "possession by majority vote".
+    possession_label      = np.nan
+    possession_ratio       = np.nan
+    possession_contested   = np.nan
+    if possession_smoothed is not None and half in possession_smoothed:
+        poss_vals = possession_smoothed[half][sf:ef + 1]
+        if poss_vals.size > 0:
+            home_ratio            = float((poss_vals == 1).mean())
+            possession_label      = "Home" if home_ratio >= 0.5 else "Away"
+            possession_ratio      = round(home_ratio, 3)
+            possession_contested  = bool(0.30 < home_ratio < 0.70)
+
     return {
-        "length_m":    round(length_m, 2),
+        "distance_m":  round(length_m, 2),
         "duration_s":  round(duration_s, 2),
         "mean_vel_ms": round(mean_vel, 3),
         "peak_vel_ms": round(peak_vel, 3),
+        "peak_frame":  peak_frame,
+        "speed_category": speed_category,
+        "total_energy_cost_J": round(total_energy_cost_J, 2),
         "pre_run_mean_vel_ms": (round(pre_run_mean_vel, 3)
                                  if not np.isnan(pre_run_mean_vel) else np.nan),
         "pre_run_peak_vel_ms": (round(pre_run_peak_vel, 3)
@@ -674,6 +481,11 @@ def extract_run_indicators(start_frame: int, end_frame: int,
         "zone_end":    zone_end,
         "third_end": zone_x_end,
         "lane_end": zone_y_end,
+        "direction":   round(direction_metric, 4),
+        "attack_sign": attack_sign,
+        "possession":           possession_label,
+        "possession_ratio":     possession_ratio,
+        "possession_contested": possession_contested,
     }
 
 
@@ -803,29 +615,6 @@ def find_best_segment(annot_row, df_auto, min_iou=0.01):
     return best_seg_id, best_excel_row, round(best_iou, 4), df_player.iloc[best_idx]
 
 # ─────────────────────────────────────────────────────────────────────────────
-# HELPERS: Shot-follow-up flag
-# ─────────────────────────────────────────────────────────────────────────────
-
-def flag_shot_within_window(elapsed_s: float, half: str, run_team: str,
-                             df_shots: pd.DataFrame,
-                             window_s: float = SHOT_WINDOW_S) -> bool:
-    """
-    Return True if run_team produced a shot within window_s seconds after
-    the run ended (same half).
-    """
-    if df_shots.empty or window_s is None:
-        return False
-
-    mask = (
-        (df_shots["half"] == half) &
-        (df_shots["team"] == run_team) &
-        (df_shots["elapsed_s"] >= elapsed_s) &
-        (df_shots["elapsed_s"] <= elapsed_s + window_s)
-    )
-    return bool(mask.any())
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # HELPERS: Reuse indicators already computed by the automated pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -836,10 +625,13 @@ def flag_shot_within_window(elapsed_s: float, half: str, run_team: str,
 _AUTO_COL_MAP = {
     "auto_start_frame":       "start_frame",
     "auto_end_frame":         "end_frame",
-    "length_m":            "distance_m",
+    "distance_m":          "distance_m",
     "duration_s":          "duration_s",
     "mean_vel_ms":         "avg_velocity_kmh",   # /3.6
     "peak_vel_ms":         "peak_speed_kmh",     # /3.6
+    "peak_frame":          "peak_frame",
+    "speed_category":      "speed_category",
+    "total_energy_cost_J": "total_energy_cost_J",
     "pre_run_mean_vel_ms": "pre_run_mean_vel_kmh",  # /3.6
     "pre_run_peak_vel_ms": "pre_run_peak_vel_kmh",  # /3.6
     "pre_run_window_s":    "pre_run_window_s",
@@ -858,6 +650,11 @@ _AUTO_COL_MAP = {
     "lane_mid":             "lane_mid",
     "lane_end":             "lane_end",
     "zone_end":            "zone_end",
+    "direction":           "direction",
+    "attack_sign":         "attack_sign",
+    "possession":           "possession",
+    "possession_ratio":     "possession_ratio",
+    "possession_contested": "possession_contested",
 }
 # Columns whose source value is in km/h and must be divided by 3.6
 # to obtain m/s.
@@ -954,16 +751,30 @@ def process_annotation_file(annot_path: str,
     # We only load the XML positions + teamsheets if at least one row is not
     # already fully covered by a reused auto match — this loading is the
     # most expensive part of the pipeline (Butterworth + VelocityModel).
-    _pos_lazy = {"xy_dict": None, "pid_to_xid": None, "loaded": False}
+    _pos_lazy = {"xy_dict": None, "pid_to_xid": None, "possession_smoothed": None, "loaded": False}
 
     def _get_position_data():
         if not _pos_lazy["loaded"]:
             print("  Loading position data (no auto match available → computation needed) …")
-            xy_dict_, teamsheets_, _pitch_ = load_position_data(match_id, data_dir)
+            xy_dict_, teamsheets_, _pitch_, possession_ = load_position_data(match_id, data_dir)
             _pos_lazy["xy_dict"]     = xy_dict_
             _pos_lazy["pid_to_xid"]  = build_person_id_to_xid(teamsheets_)
+            # Possession/possession_ratio/possession_contested only need the
+            # raw per-frame possession flag floodlight already parses from
+            # the positions file — no ball-contact reconstruction required.
+            # Apply the same light smoothing (cutoff=10 frames = 0.4s) that
+            # discretisation.py applies before computing possession_ratio,
+            # so the recomputed value matches the automated pipeline's
+            # methodology as closely as possible.
+            possession_smoothed_ = {}
+            for half_name in ("firstHalf", "secondHalf"):
+                raw_poss = np.array(possession_[half_name]).flatten().astype(int)
+                half_arr = np.ones(len(raw_poss), dtype=int)
+                smoothed, _phase_id, _phase_dur = smooth_possession(raw_poss, half_arr, cutoff=10)
+                possession_smoothed_[half_name] = smoothed
+            _pos_lazy["possession_smoothed"] = possession_smoothed_
             _pos_lazy["loaded"]      = True
-        return _pos_lazy["xy_dict"], _pos_lazy["pid_to_xid"]
+        return _pos_lazy["xy_dict"], _pos_lazy["pid_to_xid"], _pos_lazy["possession_smoothed"]
 
     # ── 3. Player map: parse matchinfo XML directly ───────────────────────
     # df_players: one row per player with person_id, jID, playing_position, …
@@ -987,16 +798,43 @@ def process_annotation_file(annot_path: str,
           f"(mapping to xID loaded on demand, on auto-match miss)")
 
     # ── 4. Event data (goals + shots) ─────────────────────────────────────
+    # Kickoff anchoring + goal/shot parsing reused from
+    # segmentation/discretisation.py so the scoreline/goal-indicator/
+    # shot-flag figures are computed identically to the automated pipeline
+    # (this used to be a second, independent XML-parsing implementation).
     print("  Parsing event data …")
-    events = parse_events_xml(match_id, data_dir)
-    df_goals = events["goals"]
-    df_shots = events["shots"]
+    path_events = find_dfl_file(data_dir, match_id, "events")
+    info_root = ET.parse(path_info).getroot()
+    ev_root   = ET.parse(path_events).getroot()
+    anchors = _build_time_anchors(path_events, path_info, framerate=FRAMERATE,
+                                  info_root=info_root, ev_root=ev_root)
+    df_goals, df_shots = parse_goals_and_shots(path_events, path_info, anchors,
+                                               framerate=FRAMERATE,
+                                               info_root=info_root, ev_root=ev_root)
 
     # ── 5. Automated segment index (whole match) ──────────────────────────
     df_auto = load_automated_segments(match_id, auto_output_dir)
     if df_auto.empty:
         print(f"  [WARN] No automated segment file found for {match_id} "
               f"in {auto_output_dir} — auto_segment_id will be NaN for all rows.")
+
+    # ── 5b. Vectorised scoreline / goal-indicator / shot-flag ──────────────
+    # Computed once for the whole file (not per row) using the same
+    # vectorised helpers discretisation.py uses for its own
+    # scoreline_at_run_start / goal_indicator / shot_within_{N}s columns.
+    _start_s_arr = df_annot["start_time_s"].astype(float).values
+    _end_s_arr   = df_annot["end_time_s"].astype(float).values
+    _half_arr    = df_annot["half"].values
+    _team_arr    = df_annot["team"].values
+
+    _scoreline_arr, _home_score_arr, _away_score_arr = compute_scoreline_vectorized(
+        _start_s_arr, _half_arr, df_goals)
+    _goal_indicator_arr = compute_goal_indicator_vectorized(
+        _home_score_arr, _away_score_arr, _team_arr)
+    _shot_flag_arr = (
+        flag_shot_within_window_vectorized(_half_arr, _team_arr, _end_s_arr, df_shots, shot_window_s)
+        if shot_window_s is not None else None
+    )
 
     # ── 6. Iterate over annotations ───────────────────────────────────────
 
@@ -1019,19 +857,22 @@ def process_annotation_file(annot_path: str,
             return np.nan
 
     INDICATOR_COLS = ["auto_start_frame", "auto_end_frame",
-                    "length_m", "duration_s", "mean_vel_ms", "peak_vel_ms",
+                    "distance_m", "duration_s", "mean_vel_ms", "peak_vel_ms",
+                      "peak_frame", "speed_category", "total_energy_cost_J",
                       "pre_run_mean_vel_ms", "pre_run_peak_vel_ms", "pre_run_window_s",
-                      "x_start", "y_start", 
+                      "x_start", "y_start",
                       "x_end", "y_end",
-                      "x_mid", "y_mid", 
+                      "x_mid", "y_mid",
                       "zone_start","third_start", "lane_start",
                       "zone_mid", "third_mid", "lane_mid",
-                      "zone_end", "third_end", "lane_end"]
+                      "zone_end", "third_end", "lane_end",
+                      "direction", "attack_sign",
+                      "possession", "possession_ratio", "possession_contested"]
 
     enriched_rows = []
     n_reused_from_auto = 0
 
-    for row_idx, row in df_annot.iterrows():
+    for pos, (row_idx, row) in enumerate(df_annot.iterrows()):
         half = row["half"]
 
         # ── 6a. Find matching automated segment (best IoU) ───────────────
@@ -1094,7 +935,7 @@ def process_annotation_file(annot_path: str,
                 indicators = {k: np.nan for k in INDICATOR_COLS}
                 duration_source = "missing"
             else:
-                xy_dict, pid_to_xid = _get_position_data()
+                xy_dict, pid_to_xid, possession_smoothed = _get_position_data()
                 indicators = extract_run_indicators(
                     start_frame  = recompute_sf,
                     end_frame    = recompute_ef,
@@ -1105,6 +946,7 @@ def process_annotation_file(annot_path: str,
                     match_id     = match_id,
                     team         = team_loc,
                     pre_window_s = pre_run_window_s,
+                    possession_smoothed = possession_smoothed,
                 )
                 if indicators is None:
                     print(f"    [WARN] No position data for segment {row['segment_id']} "
@@ -1130,21 +972,11 @@ def process_annotation_file(annot_path: str,
             designated_position = np.nan
 
         # ── 6e. Scoreline at run start ────────────────────────────────────
-        scoreline = get_scoreline_at(
-            _safe_float(row["start_time_s"]), half, df_goals
-        )
-        goal_indicator = get_goal_indicator(scoreline, row["team"])
+        scoreline      = _scoreline_arr[pos]
+        goal_indicator = _goal_indicator_arr[pos]
 
         # ── 6f. Shot-follow-up flag ───────────────────────────────────────
-        shot_flag = False
-        if shot_window_s is not None:
-            shot_flag = flag_shot_within_window(
-                elapsed_s  = _safe_float(row["end_time_s"]),
-                half       = half,
-                run_team   = row["team"],
-                df_shots   = df_shots,
-                window_s   = shot_window_s,
-    )
+        shot_flag = bool(_shot_flag_arr[pos]) if _shot_flag_arr is not None else False
 
         # ── 6g. Assemble output row ───────────────────────────────────────
         out = {
